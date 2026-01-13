@@ -1,0 +1,19 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Python Debugger: FastAPI",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "uvicorn",
+            "args": [
+                "app.app:app",   // <--- CHANGED: Points to folder 'app', file 'app.py'
+                "--host", "0.0.0.0",
+                "--port", "8000"
+                // REMOVED: "--reload" (Debugging is more stable without it)
+            ],
+            "jinja": true,
+            "cwd": "${workspaceFolder}" // Ensures it looks for the 'app' folder in the root
+        }
+    ]
+}
