@@ -3,7 +3,7 @@ from datetime import datetime
 from sqlalchemy import Column, Float, ForeignKey, String, DateTime
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
-from app.database.db import Base
+from backend.app.database.db import Base
 
 class Experiment(Base):
     __tablename__ = "experiments"

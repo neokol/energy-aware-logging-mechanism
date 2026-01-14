@@ -4,10 +4,10 @@ from dotenv import load_dotenv
 import os
 import logging
 
-from app.core.logging import setup_logging
-from app.database.db import  create_db_and_tables
-from app.routers import dataset
-from app.routers import experiments
+from backend.app.core.logging import setup_logging
+from backend.app.database.db import  create_db_and_tables
+from backend.app.routers import dataset
+from backend.app.routers import experiments
 
 load_dotenv()
 

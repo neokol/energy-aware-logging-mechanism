@@ -6,11 +6,11 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from codecarbon import EmissionsTracker
 
-from app.database.db import get_async_session
-from app.models.datasets import Dataset
-from app.models.experiments import Experiment
-from app.schemas.experiments import ExperimentResponse, ExperimentCreate
-from app.services.models_service import run_simple_neutral_network
+from backend.app.database.db import get_async_session
+from backend.app.models.datasets import Dataset
+from backend.app.models.experiments import Experiment
+from backend.app.schemas.experiments import ExperimentResponse, ExperimentCreate
+from backend.app.services.models_service import run_simple_neutral_network
 
 logger = logging.getLogger(__name__)
 

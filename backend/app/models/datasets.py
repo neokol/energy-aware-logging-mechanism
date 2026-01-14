@@ -4,7 +4,7 @@ from sqlalchemy import Column, String, Text, DateTime
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 
-from app.database.db import Base
+from backend.app.database.db import Base
 
 
 class Dataset(Base):
