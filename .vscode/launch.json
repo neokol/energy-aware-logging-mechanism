@@ -7,7 +7,7 @@
             "request": "launch",
             "module": "uvicorn",
             "args": [
-                "app.app:app",   // <--- CHANGED: Points to folder 'app', file 'app.py'
+                "backend.app.app:app",   // <--- CHANGED: Points to folder 'app', file 'app.py'
                 "--host", "0.0.0.0",
                 "--port", "8000"
                 // REMOVED: "--reload" (Debugging is more stable without it)
