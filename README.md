@@ -25,7 +25,7 @@ Built with FastAPI, CodeCarbon, and SQLite.
     2. CO2 Emissions (kg)
 
 
-🛠️ Tech Stack
+## 🛠️ Tech Stack
 - Language: Python 3.10+
 
 - Framework: FastAPI
