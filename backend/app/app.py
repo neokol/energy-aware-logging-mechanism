@@ -30,10 +30,15 @@ app = FastAPI(
     )
 
 
-@app.get("/")
+@app.get("/", summary="Home Endpoint", tags=["Health Check"])
 async def read_root():
-    logger.info("Energy Aware Logging Mechanism is running.")
-    return {"message": "Energy Aware Logging Mechanism"}
+    logger.info("Welcome to Energy Aware Logging Mechanism API.")
+    return {"message": "Welcome to Energy Aware Logging Mechanism API"}
+
+@app.get("/status", summary="Status Check", tags=["Health Check"])
+async def status():
+    logger.info("API status checked.")
+    return {"status": "API is running smoothly!"}
 
 app.include_router(dataset.router, tags=["datasets"])
 app.include_router(experiments.router, tags=["experiments"])
