@@ -10,7 +10,7 @@ from backend.app.database.db import get_async_session
 from backend.app.models.datasets import Dataset
 from backend.app.models.experiments import Experiment
 from backend.app.schemas.experiments import ExperimentResponse, ExperimentCreate
-from backend.app.services.models_service import run_simple_neutral_network
+from backend.app.services.models_service import ModelsService
 
 logger = logging.getLogger(__name__)
 
@@ -36,11 +36,11 @@ async def run_experiment(
             measure_power_secs=0.1,
             save_to_file=False
         )
-        
+        service = ModelsService()
         tracker.start()
         
         try:
-            latency, accuracy = run_simple_neutral_network(df, request.model_type)
+            latency, accuracy = service.run_neutral_network(df, request.model_type)
         except Exception as e:
             tracker.stop()
             raise HTTPException(status_code=500, detail=f"Inference failed: {e}")

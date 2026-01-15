@@ -40,6 +40,5 @@ async def status():
     logger.info("API status checked.")
     return {"status": "API is running smoothly!"}
 
-app.include_router(dataset.router, tags=["datasets"])
-app.include_router(experiments.router, tags=["experiments"])
-
+app.include_router(dataset.router, tags=["Datasets"])
+app.include_router(experiments.router, tags=["Experiments"])
