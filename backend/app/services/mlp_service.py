@@ -16,7 +16,7 @@ load_dotenv()
 setup_logging()
 logger = logging.getLogger(__name__)
 
-MODEL_PATH = os.getenv("MODEL_PATH", "trained_models/mlp_maintenance_v1.pth")
+MLP_MODEL_PATH = os.getenv("MLP_MODEL_PATH", "trained_models/mlp_maintenance_v1.pth")
 
 class MLPModelService(BaseAIModel):
     def __init__(self):
@@ -25,13 +25,13 @@ class MLPModelService(BaseAIModel):
         self.num_classes = 2
         
     def load_model(self):
-        if not os.path.exists(MODEL_PATH):
-            raise FileNotFoundError(f"Model file not found at {MODEL_PATH}")
+        if not os.path.exists(MLP_MODEL_PATH):
+            raise FileNotFoundError(f"Model file not found at {MLP_MODEL_PATH}")
         
         # Initialize architecture
         model = MaintenanceMLP(self.input_size, self.hidden_size, self.num_classes)
         # Load weights
-        model.load_state_dict(torch.load(MODEL_PATH))
+        model.load_state_dict(torch.load(MLP_MODEL_PATH))
         model.eval()
         return model
     
