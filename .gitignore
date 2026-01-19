@@ -236,3 +236,4 @@ $RECYCLE.BIN/
 logs/
 uploads/
 test.db
+trained_models/
