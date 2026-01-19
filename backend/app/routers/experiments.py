@@ -5,7 +5,6 @@ from typing import List
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from codecarbon import EmissionsTracker
 
 from backend.app.database.db import get_async_session
 from backend.app.models.datasets import Dataset
