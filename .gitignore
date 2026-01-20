@@ -237,3 +237,4 @@ logs/
 uploads/
 test.db
 trained_models/
+data/
