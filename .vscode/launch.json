@@ -17,6 +17,22 @@
             "env": {
                 "PYTHONPATH": "${workspaceFolder}" 
             }, 
+        },
+        {
+            "name": "Python Debugger: Streamlit (Frontend)",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "streamlit",
+            "args": [
+                "run",
+                "frontend/app.py",
+                "--server.port", "8501"
+            ],
+            "jinja": true,
+            "cwd": "${workspaceFolder}",
+            "env": {
+                "PYTHONPATH": "${workspaceFolder}"
+            }
         }
     ]
 }
