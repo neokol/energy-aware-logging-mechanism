@@ -1,14 +1,16 @@
 from pydantic import BaseModel, ConfigDict
 from datetime import datetime
 
+from backend.app.models.enums import PrecisionType
+
 class ExperimentCreate(BaseModel):
     dataset_id: str
-    model_type: str  
+    precision: PrecisionType  
 
 class ExperimentResponse(BaseModel):
     id: str
     dataset_id: str
-    model_type: str | None = None
+    precision: PrecisionType
     latency_seconds: float |  None = None
     emissions_kg: float |  None = None
     energy_consumed_kwh: float | None = None

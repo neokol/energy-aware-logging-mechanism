@@ -10,6 +10,7 @@ from dotenv import load_dotenv
 from backend.app.core.logging import setup_logging
 from backend.ai_models.mlp import MaintenanceMLP
 from backend.app.services.base_model import BaseAIModel
+from backend.app.models.enums import PrecisionType
 
 load_dotenv()
 
@@ -43,12 +44,12 @@ class MLPModelService(BaseAIModel):
         
         model = self.load_model()
         
-        if precision == "int8":
+        if precision == PrecisionType.INT8.value:
             model = torch.quantization.quantize_dynamic(
                 model, {torch.nn.Linear}, dtype=torch.qint8
             )
             logger.info("Model quantized to INT8")
-        elif precision == "fp32":
+        elif precision == PrecisionType.FP32.value:
             logger.info("Using FP32 model")
             
 

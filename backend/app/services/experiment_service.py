@@ -5,8 +5,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from codecarbon import EmissionsTracker
 
 from backend.app.models.datasets import Dataset
+from backend.app.models.enums import PrecisionType
 from backend.app.models.experiments import Experiment
 from backend.app.services.base_model import BaseAIModel
+
 
 logger = logging.getLogger(__name__)
 
@@ -15,7 +17,7 @@ async def execute_experiment(
     dataset: Dataset, 
     df: pd.DataFrame, 
     model_service: BaseAIModel, 
-    precision: str
+    precision: PrecisionType
 ) -> Experiment:
     """
     Orchestrates the full experiment: 
@@ -24,7 +26,7 @@ async def execute_experiment(
     3. Stops Tracker
     4. Saves to Database
     """
-    logger.info(f"Starting Experiment Run: {precision.upper()} for Dataset ID {dataset.id}")
+    logger.info(f"Starting Experiment Run: {precision} for Dataset ID {dataset.id}")
     
     # 1. Start Emissions Tracker
     tracker = EmissionsTracker(
@@ -50,7 +52,7 @@ async def execute_experiment(
     # 4. Save to Database
     new_experiment = Experiment(
         dataset_id=dataset.id,
-        model_type=precision,
+        precision=precision,
         accuracy=accuracy,
         latency_seconds=latency,
         emissions_kg=data.emissions,

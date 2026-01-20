@@ -9,6 +9,8 @@ import os
 
 from backend.app.database.db import get_async_session
 from backend.app.models.datasets import Dataset
+from backend.app.models.enums import ModelType
+
 
 load_dotenv()
 
@@ -22,7 +24,7 @@ router = APIRouter()
 async def create_dataset(
         file:UploadFile = File(...), 
         description: str= "", 
-        ai_model: str = "",
+        ai_model: ModelType = ModelType.MLP,
         session: AsyncSession = Depends(get_async_session)
     ):
     try:
@@ -61,7 +63,7 @@ async def get_datasets(session: AsyncSession = Depends(get_async_session)):
         logger.info("Fetching all datasets from the database.")
         result = await session.execute(select(Dataset))
         datasets = [row[0] for row in result.all()]
-
+        logger.info(f"Fetched {len(datasets)} datasets.")
         return {"datasets": datasets}
     except Exception as e:
         logger.error(f"Error fetching datasets: {e}")
@@ -98,7 +100,7 @@ async def delete_dataset(dataset_id: str, session: AsyncSession = Depends(get_as
 async def update_dataset(
         dataset_id: str, 
         description: str = None, 
-        ai_model: str = None,
+        ai_model: ModelType = None,
         session: AsyncSession = Depends(get_async_session)
     ):
     try:

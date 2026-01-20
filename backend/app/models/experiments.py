@@ -1,9 +1,10 @@
 import uuid
 from datetime import datetime
-from sqlalchemy import Column, Float, ForeignKey, String, DateTime
+from sqlalchemy import Column, Float, ForeignKey, String, DateTime, Enum
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 from backend.app.database.db import Base
+from backend.app.models.enums import PrecisionType
 
 class Experiment(Base):
     __tablename__ = "experiments"
@@ -11,7 +12,7 @@ class Experiment(Base):
     id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     
     dataset_id = Column(String(36), ForeignKey("datasets.id"), nullable=False)
-    model_type = Column(String(50), nullable=False)
+    precision = Column(Enum(PrecisionType), nullable=False)
     
     latency_seconds = Column(Float, nullable=True)
     emissions_kg = Column(Float, nullable=True)
