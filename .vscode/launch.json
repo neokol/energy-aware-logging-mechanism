@@ -7,13 +7,16 @@
             "request": "launch",
             "module": "uvicorn",
             "args": [
-                "backend.app.app:app",   // <--- CHANGED: Points to folder 'app', file 'app.py'
+                "backend.app.app:app",   
                 "--host", "0.0.0.0",
                 "--port", "8000"
-                // REMOVED: "--reload" (Debugging is more stable without it)
+                // REMOVED: "--reload"
             ],
             "jinja": true,
-            "cwd": "${workspaceFolder}" // Ensures it looks for the 'app' folder in the root
+            "cwd": "${workspaceFolder}",
+            "env": {
+                "PYTHONPATH": "${workspaceFolder}" 
+            }, 
         }
     ]
 }
