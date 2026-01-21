@@ -37,8 +37,8 @@ try:
         dataset_count = len(datasets)
     else:
         dataset_count = 0
-except:
-    dataset_count = "Error"
+except Exception as e:
+    dataset_count = f"Error: {e}"
 
 st.divider()
 
