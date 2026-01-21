@@ -25,7 +25,7 @@
             "module": "streamlit",
             "args": [
                 "run",
-                "frontend/app.py",
+                "frontend/Home.py",
                 "--server.port", "8501"
             ],
             "jinja": true,
