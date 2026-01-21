@@ -21,3 +21,10 @@ class ExperimentResponse(BaseModel):
     created_at: datetime |  None = None
 
     model_config = ConfigDict(from_attributes=True)
+
+class ExperimentComparisonResponse(BaseModel):
+    dataset_id: str
+    fp32: ExperimentResponse
+    int8: ExperimentResponse
+
+    model_config = ConfigDict(from_attributes=True)

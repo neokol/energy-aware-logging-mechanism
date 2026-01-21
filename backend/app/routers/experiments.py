@@ -3,13 +3,13 @@ import logging
 import pandas as pd
 from typing import List
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import select
+from sqlalchemy import desc, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.app.database.db import get_async_session
 from backend.app.models.datasets import Dataset
 from backend.app.models.experiments import Experiment
-from backend.app.schemas.experiments import ExperimentResponse
+from backend.app.schemas.experiments import ExperimentComparisonResponse, ExperimentResponse
 from backend.app.services.experiment_service import execute_experiment
 from backend.app.services.model_factory import ModelFactory
 from backend.app.models.enums import PrecisionType
@@ -74,6 +74,45 @@ async def run_experiment(
         logger.error(f"HTTP error during experiment: {he.detail}")
         raise he
     
+@router.get("/experiments/{dataset_id}", response_model=ExperimentComparisonResponse)
+async def get_experiment_by_dataset(
+    dataset_id: str, 
+    session: AsyncSession = Depends(get_async_session)
+):
+    try:
+        logger.info(f"Fetching experiment for dataset ID: {dataset_id}")
+        
+        result_fp32 = await session.execute(
+        select(Experiment)
+        .where(Experiment.dataset_id == dataset_id)
+        .where(Experiment.precision == PrecisionType.FP32)
+        .order_by(desc(Experiment.created_at)) # Newest first
+        .limit(1)
+    )
+        exp_fp32 = result_fp32.scalar_one_or_none()
+
+        result_int8 = await session.execute(
+        select(Experiment)
+        .where(Experiment.dataset_id == dataset_id)
+        .where(Experiment.precision == PrecisionType.INT8)
+        .order_by(desc(Experiment.created_at))
+        .limit(1)
+    )
+        exp_int8 = result_int8.scalar_one_or_none()
+
+        if not exp_fp32 or not exp_int8:
+            
+            raise HTTPException(status_code=404, detail="Incomplete experiment history. Please run a new comparison.")
+        logger.info(f"Fetched experiments for dataset ID: {dataset_id}")
+        return ExperimentComparisonResponse(
+            dataset_id=dataset_id,
+            fp32=exp_fp32,
+            int8=exp_int8,
+        )
+
+    except Exception as e:
+        logger.error(f"Error fetching experiment for dataset ID {dataset_id}: {e}")
+        raise HTTPException(status_code=500, detail="Could not fetch experiment")
 
 @router.get("/experiments/", response_model=List[ExperimentResponse])
 async def get_experiments(
