@@ -25,7 +25,8 @@ async def create_dataset(
         file:UploadFile = File(...), 
         description: str= "", 
         ai_model: ModelType = ModelType.MLP,
-        session: AsyncSession = Depends(get_async_session)
+        session: AsyncSession = Depends(get_async_session),
+        model_id: str = ""
     ):
     try:
         logger.info(f"Received upload request for file: {file.filename}")

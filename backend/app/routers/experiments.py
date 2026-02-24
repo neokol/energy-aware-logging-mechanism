@@ -3,14 +3,15 @@ import logging
 import pandas as pd
 from typing import List
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import desc, select
+from sqlalchemy import desc, select, delete
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.app.database.db import get_async_session
 from backend.app.models.datasets import Dataset
 from backend.app.models.experiments import Experiment
-from backend.app.schemas.experiments import ExperimentComparisonResponse, ExperimentResponse
+from backend.app.schemas.experiments import BatchExperimentRequest, ExperimentComparisonResponse, ExperimentRequest, ExperimentResponse
 from backend.app.services.experiment_service import execute_experiment
+from backend.app.services.inference.experiment import run_batch_experiment, run_experiment_logic
 from backend.app.services.model_factory import ModelFactory
 from backend.app.models.enums import PrecisionType
 
@@ -152,6 +153,23 @@ async def delete_experiment(
         logger.error(f"Error deleting experiment with ID {experiment_id}: {e}")
         raise HTTPException(status_code=500, detail="Could not delete experiment")
     
+@router.delete("/experiments")
+async def delete_all_experiment(
+    session: AsyncSession = Depends(get_async_session)
+):
+    try:
+        logger.info("Received request to delete all experiment")
+        await session.execute(delete(Experiment)) 
+
+        await session.commit()
+        
+        logger.info("All experiments deleted successfully from database")
+        
+        return {"detail": "All experiments deleted successfully"}
+    except Exception as e:
+        logger.error(f"Error deleting experiments: {e}")
+        raise HTTPException(status_code=500, detail="Could not delete experiments")
+    
 @router.get("/compare/{dataset_id}")
 async def compare_models(
     dataset_id: str, 
@@ -189,3 +207,42 @@ async def compare_models(
     except HTTPException as he:
         logger.error(f"HTTP error during model comparison: {he.detail}")
         raise he
+    
+
+@router.post("/run-inference")
+async def run_inference(
+    req: ExperimentRequest,
+    db: AsyncSession = Depends(get_async_session)
+):
+    try:
+        experiments =await  run_experiment_logic(db, req.model_id, req.dataset_id)
+        
+        return {
+            "message": "Success", 
+            "experiments": [
+                {"id": e.id, "precision": e.precision, "energy": e.energy_consumed_kwh} 
+                for e in experiments
+            ]
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    
+
+@router.post("/run-batch")
+async def run_batch(
+    req: BatchExperimentRequest,
+    db: AsyncSession = Depends(get_async_session)
+):
+    try:
+        # Call the new upgraded service
+        batch_id, experiments = await run_batch_experiment(db, req.dataset_id, req.model_ids)
+        
+        return {
+            "message": "Batch completed successfully", 
+            "batch_id": batch_id, # Frontend will need this!
+            "total_runs": len(experiments)
+        }
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
