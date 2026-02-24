@@ -1,5 +1,6 @@
 from pydantic import BaseModel, ConfigDict
 from datetime import datetime
+from typing import List
 
 from backend.app.models.enums import PrecisionType
 
@@ -9,7 +10,9 @@ class ExperimentCreate(BaseModel):
 
 class ExperimentResponse(BaseModel):
     id: str
+    batch_id: str
     dataset_id: str
+    model_id: str
     precision: PrecisionType
     latency_seconds: float |  None = None
     emissions_kg: float |  None = None
@@ -28,3 +31,11 @@ class ExperimentComparisonResponse(BaseModel):
     int8: ExperimentResponse
 
     model_config = ConfigDict(from_attributes=True)
+
+class ExperimentRequest(BaseModel):
+    model_id: str
+    dataset_id: str
+
+class BatchExperimentRequest(BaseModel):
+    dataset_id: str
+    model_ids: List[str]
