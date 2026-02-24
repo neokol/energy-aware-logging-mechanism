@@ -6,8 +6,7 @@ import logging
 
 from backend.app.core.logging import setup_logging
 from backend.app.database.db import  create_db_and_tables
-from backend.app.routers import dataset
-from backend.app.routers import experiments
+from backend.app.routers import dataset, generate, models, experiments
 
 load_dotenv()
 
@@ -42,3 +41,5 @@ async def status():
 
 app.include_router(dataset.router, tags=["Datasets"])
 app.include_router(experiments.router, tags=["Experiments"])
+app.include_router(generate.router, tags=["Artifact Generation"])
+app.include_router(models.router, tags=["Model Upload"])
