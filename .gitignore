@@ -238,3 +238,7 @@ uploads/
 test.db
 trained_models/
 data/
+
+adult_*
+emissions.csv*
+california_*
