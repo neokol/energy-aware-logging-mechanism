@@ -20,6 +20,11 @@ with st.sidebar:
     st.header("⚙️ Settings")
     st.write("Current Backend:")
     st.code(API_URL, language="text")
+    n_runs = st.slider(
+        "Repeat runs (averaged)",
+        min_value=1, max_value=10, value=1,
+        help="Run each precision N times and average the results for more reliable measurements."
+    )
     if st.button("🔄 Refresh Datasets"):
         st.rerun()
 
@@ -133,29 +138,35 @@ if datasets:
         my_bar = st.progress(0, text=progress_text)
         
         try:
-            my_bar.progress(10, text="Initializing Models...")
-            
-            # Call the RUN endpoint
-            resp = requests.get(f"{API_URL}/compare/{selected_id}")
-            
+            run_label = f"{n_runs} run(s)" if n_runs > 1 else "1 run"
+            my_bar.progress(10, text=f"Initializing Models ({run_label})...")
+
+            resp = requests.get(f"{API_URL}/compare/{selected_id}", params={"n_runs": n_runs})
+
             my_bar.progress(80, text="Processing Results...")
-            
+
             if resp.status_code == 200:
                 data = resp.json()
-                
-                # The response structure from /compare/ usually contains
-                # 'fp32_results' and 'int8_results' based on your previous code.
-                # Adjust keys if your /compare endpoint returns something else.
+
                 fp32_res = data.get('fp32_results') or data.get('fp32')
                 int8_res = data.get('int8_results') or data.get('int8')
+                averaged = data.get('averaged', {})
+                improvement = data.get('improvement', {})
 
                 my_bar.progress(100, text="Done!")
                 time.sleep(0.5)
                 my_bar.empty()
 
-                st.success("✅ New Experiment Completed Successfully!")
-                
-                # Render the Chart with NEW data
+                st.success(f"✅ Experiment Completed ({run_label})!")
+
+                if n_runs > 1:
+                    st.markdown(f"#### 📐 Averaged Results ({n_runs} runs)")
+                    ac1, ac2, ac3 = st.columns(3)
+                    ac1.metric("Avg Energy FP32 (kWh)", f"{averaged.get('fp32_energy_kwh', 0):.8f}")
+                    ac2.metric("Avg Energy INT8 (kWh)", f"{averaged.get('int8_energy_kwh', 0):.8f}",
+                               delta=f"{improvement.get('energy_saved_percentage', 0):+.1f}%")
+                    ac3.metric("Accuracy Loss", f"{improvement.get('accuracy_loss', 0):+.4f}")
+
                 display_charts(fp32_res, int8_res)
                 
                 # Optional: Rerun to update the "History" view automatically

@@ -7,9 +7,9 @@ from sqlalchemy import select
 from dotenv import load_dotenv
 import os
 
-from backend.app.database.db import get_async_session
-from backend.app.models.model import Model
-from backend.app.models.enums import AlgorithmType
+from app.database.db import get_async_session
+from app.models.model import Model
+from app.models.enums import AlgorithmType
 
 load_dotenv()
 

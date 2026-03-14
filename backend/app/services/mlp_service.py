@@ -7,10 +7,10 @@ import logging
 from dotenv import load_dotenv
 
 
-from backend.app.core.logging import setup_logging
-from backend.ai_models.mlp import MaintenanceMLP
-from backend.app.services.base_model import BaseAIModel
-from backend.app.models.enums import PrecisionType
+from app.core.logging import setup_logging
+from ai_models.mlp import MaintenanceMLP
+from app.services.base_model import BaseAIModel
+from app.models.enums import PrecisionType
 
 load_dotenv()
 
@@ -36,15 +36,22 @@ class MLPModelService(BaseAIModel):
         model.eval()
         return model
     
-    def run_inference(self, df: pd.DataFrame, precision: str) -> tuple[float, float]:
-        # 1. Prepare Data
-        # Ensure we only take numbers and convert to Float32 Tensor
-        data_values = df.select_dtypes(include=[np.number]).values
+    def run_inference(self, df: pd.DataFrame, precision: str) -> tuple[float, float, float]:
+        # 1. Prepare Data — extract labels if present, then features
+        df_numeric = df.select_dtypes(include=[np.number])
+        if "label" in df.columns:
+            labels = torch.tensor(df["label"].values, dtype=torch.long)
+            data_values = df_numeric.drop(columns=["label"], errors="ignore").values
+        else:
+            labels = None
+            data_values = df_numeric.values
         input_tensor = torch.tensor(data_values, dtype=torch.float32)
         
         model = self.load_model()
         
         if precision == PrecisionType.INT8.value:
+            from app.core.platform_config import get_quantization_engine
+            torch.backends.quantized.engine = get_quantization_engine()
             model = torch.quantization.quantize_dynamic(
                 model, {torch.nn.Linear}, dtype=torch.qint8
             )
@@ -57,14 +64,22 @@ class MLPModelService(BaseAIModel):
         start_time = time.time()
 
         with torch.no_grad():
-            for _ in range(10): 
+            for _ in range(10):
                 output = model(input_tensor)
-
 
         end_time = time.time()
         latency = end_time - start_time
 
-        # Dummy accuracy values for illustration
-        accuracy = 0.95 if precision == "fp32" else 0.92 
+        n_loops = 10
+        n_samples = len(df)
+        throughput = (n_samples * n_loops) / latency if latency > 0 else 0.0
 
-        return latency, accuracy
+        if labels is not None:
+            predictions = output.argmax(dim=1)
+            accuracy = float((predictions == labels).sum()) / len(labels)
+            logger.info(f"Real MLP accuracy ({precision}): {accuracy:.4f}")
+        else:
+            accuracy = 0.95 if precision == PrecisionType.FP32.value else 0.92
+            logger.warning("No label column found — using dummy accuracy")
+
+        return latency, accuracy, throughput

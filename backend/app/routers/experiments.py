@@ -1,4 +1,5 @@
 import os
+import uuid
 import logging
 import pandas as pd
 from typing import List
@@ -6,14 +7,14 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import desc, select, delete
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from backend.app.database.db import get_async_session
-from backend.app.models.datasets import Dataset
-from backend.app.models.experiments import Experiment
-from backend.app.schemas.experiments import BatchExperimentRequest, ExperimentComparisonResponse, ExperimentRequest, ExperimentResponse
-from backend.app.services.experiment_service import execute_experiment
-from backend.app.services.inference.experiment import run_batch_experiment, run_experiment_logic
-from backend.app.services.model_factory import ModelFactory
-from backend.app.models.enums import PrecisionType
+from app.database.db import get_async_session
+from app.models.datasets import Dataset
+from app.models.experiments import Experiment
+from app.schemas.experiments import BatchExperimentRequest, ExperimentComparisonResponse, ExperimentRequest, ExperimentResponse
+from app.services.experiment_service import execute_experiment
+from app.services.inference.experiment import run_batch_experiment, run_experiment_logic
+from app.services.model_factory import ModelFactory
+from app.models.enums import PrecisionType
 
 logger = logging.getLogger(__name__)
 
@@ -170,38 +171,61 @@ async def delete_all_experiment(
         logger.error(f"Error deleting experiments: {e}")
         raise HTTPException(status_code=500, detail="Could not delete experiments")
     
+def _avg(values: list, key: str) -> float:
+    vals = [getattr(e, key) for e in values if getattr(e, key) is not None]
+    return sum(vals) / len(vals) if vals else 0.0
+
+
 @router.get("/compare/{dataset_id}")
 async def compare_models(
-    dataset_id: str, 
+    dataset_id: str,
+    n_runs: int = 1,
     session: AsyncSession = Depends(get_async_session)
 ):
     try:
-        """
-        Runs BOTH fp32 and int8 sequentially and returns the difference.
-        """
-        logger.info(f"Starting model comparison for dataset ID: {dataset_id}")
+        logger.info(f"Starting model comparison for dataset ID: {dataset_id}, n_runs={n_runs}")
+        n_runs = max(1, min(n_runs, 10))  # clamp between 1 and 10
         dataset, df, model_service = await _get_dataset_and_model(session, dataset_id)
 
+        batch_id = str(uuid.uuid4())
+        runs_fp32, runs_int8 = [], []
 
-        exp_fp32 = await execute_experiment(session, dataset, df, model_service, PrecisionType.FP32)
-        exp_int8 = await execute_experiment(session, dataset, df, model_service, PrecisionType.INT8)
+        for i in range(n_runs):
+            logger.info(f"Run {i + 1}/{n_runs} ...")
+            runs_fp32.append(await execute_experiment(session, dataset, df, model_service, PrecisionType.FP32, batch_id=batch_id))
+            runs_int8.append(await execute_experiment(session, dataset, df, model_service, PrecisionType.INT8, batch_id=batch_id))
 
-        # Calculate Logic
-        energy_saved_kwh = exp_fp32.energy_consumed_kwh - exp_int8.energy_consumed_kwh
-        energy_saved_pct = (energy_saved_kwh / exp_fp32.energy_consumed_kwh * 100) if exp_fp32.energy_consumed_kwh > 0 else 0
-        latency_saved_sec = exp_fp32.latency_seconds - exp_int8.latency_seconds
-        latency_saved_pct = (latency_saved_sec / exp_fp32.latency_seconds * 100) if exp_fp32.latency_seconds > 0 else 0
-        logger.info(f"Model comparison completed for dataset ID: {dataset_id}")
+        fp32_energy  = _avg(runs_fp32, "energy_consumed_kwh")
+        int8_energy  = _avg(runs_int8, "energy_consumed_kwh")
+        fp32_latency = _avg(runs_fp32, "latency_seconds")
+        int8_latency = _avg(runs_int8, "latency_seconds")
+        fp32_acc     = _avg(runs_fp32, "accuracy")
+        int8_acc     = _avg(runs_int8, "accuracy")
+
+        energy_saved_kwh = fp32_energy - int8_energy
+        energy_saved_pct = (energy_saved_kwh / fp32_energy * 100) if fp32_energy > 0 else 0
+        latency_saved_pct = ((fp32_latency - int8_latency) / fp32_latency * 100) if fp32_latency > 0 else 0
+
+        logger.info(f"Comparison completed ({n_runs} run(s)) for dataset ID: {dataset_id}")
         return {
             "dataset_id": dataset.id,
             "model_type": dataset.ai_model,
-            "fp32_results": exp_fp32, 
-            "int8_results": exp_int8,
+            "n_runs": n_runs,
+            "fp32_results": runs_fp32[-1],
+            "int8_results": runs_int8[-1],
+            "averaged": {
+                "fp32_energy_kwh": fp32_energy,
+                "int8_energy_kwh": int8_energy,
+                "fp32_latency_sec": fp32_latency,
+                "int8_latency_sec": int8_latency,
+                "fp32_accuracy": fp32_acc,
+                "int8_accuracy": int8_acc,
+            },
             "improvement": {
                 "energy_saved_kwh": energy_saved_kwh,
                 "energy_saved_percentage": round(energy_saved_pct, 2),
                 "latency_reduced_percentage": round(latency_saved_pct, 2),
-                "accuracy_loss": round(exp_fp32.accuracy - exp_int8.accuracy, 4)
+                "accuracy_loss": round(fp32_acc - int8_acc, 4)
             }
         }
     except HTTPException as he:

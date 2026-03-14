@@ -4,9 +4,9 @@ import numpy as np
 import logging
 from codecarbon import EmissionsTracker
 
-from backend.app.core.logging import setup_logging
-from backend.app.models.enums import PrecisionType
-from backend.app.services.inference.inference_runner import InferenceStrategy
+from app.core.logging import setup_logging
+from app.models.enums import PrecisionType
+from app.services.inference.inference_runner import InferenceStrategy
 
 setup_logging()
 logger = logging.getLogger(__name__)

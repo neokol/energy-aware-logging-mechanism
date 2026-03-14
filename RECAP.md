@@ -1,0 +1,248 @@
+# Energy-Aware Logging Mechanism — Full Recap
+
+## What This Project Does
+
+This system measures and compares the **energy consumption, carbon emissions, latency, throughput, and accuracy** of running AI inference at two precision levels:
+
+- **FP32** — standard 32-bit floating point (baseline)
+- **INT8** — 8-bit integer quantization (compressed, faster, less energy)
+
+The core thesis question is: **How much energy can INT8 quantization save, and at what cost to accuracy?**
+
+---
+
+## System Architecture
+
+```
+Frontend (Streamlit :8501)
+    └── Upload Page        → uploads CSV datasets
+    └── Experiments Page   → triggers FP32 vs INT8 comparison
+    └── Results Page       → visualizes all collected metrics
+
+Backend (FastAPI :8000)
+    └── Dataset Router     → CRUD for datasets
+    └── Experiment Router  → orchestrates runs, returns metrics
+    └── Experiment Service → tracks energy via codecarbon
+    └── MLP Service        → inference on tabular data
+    └── CNN Service        → inference on image pixel data
+    └── Platform Config    → auto-detects OS, sets quantization engine
+```
+
+---
+
+## Supported Models
+
+| Model | Architecture | Input | Dataset |
+|-------|-------------|-------|---------|
+| MLP | 2-layer Linear (512→1024→2) | 512 numeric features + label | `maintenance_data.csv` |
+| CNN | 2× Conv + MaxPool + Linear | 784 pixels (28×28 MNIST) | `mnist_test.csv` |
+
+---
+
+## Dataset Requirements
+
+| Model | File | Columns | Notes |
+|-------|------|---------|-------|
+| MLP | `maintenance_data.csv` | `label` + 512 features | Generate with `setup_models.py` |
+| CNN | `mnist_test.csv` | 785 cols: label + 784 pixels | MNIST CSV from Kaggle |
+
+Generate MLP dataset:
+```bash
+cd backend
+uv run python generate_mlp_data.py   # creates maintenance_data.csv with label column
+```
+
+---
+
+## Setup & Running
+
+```bash
+# 1. Generate model weights
+cd backend
+uv run python setup_models.py   # MLP — instant
+uv run python setup_cnn.py      # CNN — ~2 min, downloads MNIST
+
+# 2. Start backend (always from backend/ directory)
+uv run uvicorn app.app:app --reload
+
+# 3. Start frontend (separate terminal)
+cd frontend
+uv run streamlit run Home.py
+```
+
+---
+
+## Platform Support
+
+| Platform | Quantization Engine | Energy Tracking |
+|----------|-------------------|-----------------|
+| macOS Apple Silicon | `qnnpack` | PowerMetrics (sudo once) |
+| Linux x86_64 | `fbgemm` | RAPL (auto) |
+| Windows x86_64 | `fbgemm` | CPU TDP estimate |
+
+Auto-detected at startup via `app/core/platform_config.py`. Logged on every server start.
+
+---
+
+## Experiment Workflow
+
+### 1. Upload a Dataset
+Go to **Upload** page → select CSV file → choose model type (MLP or CNN) → submit.
+
+### 2. Run a Comparison
+Go to **Experiments** page:
+- Select a dataset from the dropdown
+- Set **repeat runs** (1–10) in the sidebar for averaged, more reliable results
+- Click **Start Comparison Experiment**
+
+The backend runs FP32 and INT8 N times each, saves every run to the DB, and returns averaged metrics.
+
+### 3. View Results
+Go to **Results** page — see all experiments with full filtering and visualizations.
+
+---
+
+## Metrics Collected per Run
+
+| Metric | Unit | Description |
+|--------|------|-------------|
+| `latency_seconds` | s | Total wall-clock time for all inference loops |
+| `throughput_samples_per_sec` | samples/s | (rows × loops) ÷ latency |
+| `energy_consumed_kwh` | kWh | Total cpu + ram + gpu energy |
+| `emissions_kg` | kg CO₂ | Energy × carbon intensity (region-aware) |
+| `cpu_energy_kwh` | kWh | CPU component only |
+| `ram_energy_kwh` | kWh | RAM component only |
+| `accuracy` | 0–1 | Real: argmax predictions vs ground-truth labels |
+| `duration` | s | codecarbon tracking duration |
+
+> **Note on Apple Silicon:** `energy_consumed_kwh` and `emissions_kg` fall back to component sum and energy × 0.4 kg/kWh when codecarbon returns NaN on M-series chips.
+
+---
+
+## Results Page — Features
+
+| Section | What It Shows |
+|---------|--------------|
+| **Summary metrics** | Total runs, FP32/INT8/MLP/CNN counts |
+| **Filters** | Filter by Precision, Model Type (MLP/CNN), Dataset |
+| **Experiments table** | All runs with all metrics |
+| **⬇️ Export CSV** | Downloads current filtered view |
+| **Energy chart** | Avg kWh — FP32 vs INT8 |
+| **Latency chart** | Avg seconds — FP32 vs INT8 |
+| **Throughput chart** | Avg samples/sec — FP32 vs INT8 |
+| **Emissions chart** | Avg kg CO₂ — FP32 vs INT8 |
+| **Accuracy chart** | Avg accuracy — FP32 vs INT8 |
+| **Savings table** | Per-dataset: energy saved kWh/%, latency saved s/% |
+| **Scatter plot** | Accuracy (y) vs Energy (x) — trade-off frontier |
+| **Trade-off score** | Accuracy ÷ Energy — efficiency ranking |
+| **Radar chart** | 5-dimensional normalized comparison |
+
+---
+
+## Interpreting the Results
+
+### Energy Consumption (kWh)
+- **FP32 bar higher than INT8** → quantization is saving energy ✅
+- Values are very small (e.g. `0.00002 kWh`) because experiments run for seconds, not hours
+- Scale matters for the **comparison ratio**, not the absolute value
+- **Expected**: INT8 uses 20–60% less energy than FP32
+
+### Carbon Emissions (kg CO₂)
+- Derived from energy × local carbon intensity (g CO₂ per kWh)
+- On Apple Silicon this uses a default of 0.4 kg/kWh (Greek grid average)
+- On Linux with RAPL + internet, codecarbon uses real-time regional data
+- **Lower is better** — the INT8 bar should be shorter
+
+### Latency (seconds)
+- Measures total time for all inference loops (10 for MLP, 5 for CNN)
+- INT8 is not always faster on all hardware — quantization overhead can exceed compute savings on small models or when the CPU doesn't natively support INT8 ops
+- **Apple M4**: INT8 may show similar or slightly higher latency due to emulation overhead
+- **x86 with AVX-512**: INT8 is significantly faster
+
+### Throughput (samples/sec)
+- Formula: `(dataset_rows × inference_loops) ÷ latency`
+- Higher = better — more data processed per unit of time
+- **INT8 higher throughput** confirms quantization is genuinely faster end-to-end
+
+### Accuracy
+- **CNN (MNIST)**: real accuracy — fraction of correctly predicted digits (0–9)
+- **MLP (maintenance data)**: real accuracy against synthetic binary labels
+- FP32 and INT8 should show similar accuracy for a well-trained model
+- Large accuracy drops (>5%) indicate the model is sensitive to quantization
+
+### Accuracy vs Energy Scatter Plot
+- Each dot = one experiment run
+- **X-axis**: energy consumed (lower = left)
+- **Y-axis**: accuracy (higher = up)
+- **Ideal position**: top-left corner (high accuracy, low energy)
+- **INT8 dots should be left of FP32 dots** (less energy) at similar height (same accuracy)
+- If INT8 dots drop significantly lower on Y → accuracy loss is too high
+
+### Trade-off Score (Accuracy ÷ Energy)
+- Answers: *"How much accuracy do I get per unit of energy consumed?"*
+- **Higher score = better efficiency**
+- Example: FP32 score = 50,000, INT8 score = 120,000 → INT8 delivers 2.4× more accuracy per kWh
+- The **"INT8 Worth It?"** verdict triggers green (✅) when:
+  - Accuracy loss < 2%
+  - Energy saving > 10%
+
+### Radar Chart
+- 5 axes, all normalized 0–1:
+  - **Accuracy** — higher is better
+  - **Throughput** — higher is better
+  - **Low Energy** — inverted: higher position = less energy used
+  - **Low Emissions** — inverted: higher position = less CO₂
+  - **Low Latency** — inverted: higher position = faster
+- **Larger filled area = better overall profile**
+- INT8 polygon should be larger or equal to FP32 in most dimensions
+- If FP32 polygon is larger on Accuracy axis → INT8 has meaningful accuracy loss
+
+### FP32 vs INT8 Savings Table
+| Column | Interpretation |
+|--------|---------------|
+| `energy_saved_kwh` | Absolute energy reduction |
+| `energy_saved_%` | Relative reduction — use this for thesis claims |
+| `latency_saved_sec` | Absolute speed gain |
+| `latency_saved_%` | Relative speed gain |
+
+---
+
+## Key Files
+
+| File | Purpose |
+|------|---------|
+| `app/app.py` | FastAPI entry point, startup logging |
+| `app/core/platform_config.py` | OS detection, quantization engine, codecarbon config |
+| `app/routers/experiments.py` | `/compare` endpoint with `n_runs` averaging |
+| `app/services/experiment_service.py` | Runs tracker, calls inference, saves to DB |
+| `app/services/mlp_service.py` | MLP inference + real accuracy |
+| `app/services/cnn_service.py` | CNN inference + real accuracy |
+| `app/services/base_model.py` | Abstract interface: returns `(latency, accuracy, throughput)` |
+| `app/core/platform_config.py` | Platform detection |
+| `app/models/experiments.py` | DB schema for experiment results |
+| `app/schemas/experiments.py` | Pydantic response models |
+| `frontend/pages/1_Upload.py` | Upload datasets |
+| `frontend/pages/2_Experiments.py` | Run comparisons |
+| `frontend/pages/3_Results.py` | Full results dashboard |
+| `generate_mlp_data.py` | Generates MLP dataset with label column |
+| `setup_models.py` | Creates MLP model weights |
+| `setup_cnn.py` | Trains CNN on MNIST |
+
+---
+
+## All API Endpoints
+
+| Endpoint | Description |
+|----------|-------------|
+| `POST /datasets` | Upload a dataset |
+| `GET /datasets` | List all datasets |
+| `DELETE /datasets/{id}` | Delete dataset |
+| `PATCH /datasets/{id}` | Update dataset metadata |
+| `GET /compare/{dataset_id}?n_runs=N` | Run FP32+INT8 comparison, N times each |
+| `POST /run-experiment` | Single precision run |
+| `GET /experiments/` | List all experiments |
+| `GET /experiments/{dataset_id}` | Get latest FP32+INT8 pair for a dataset |
+| `DELETE /experiments/{id}` | Delete one experiment |
+| `DELETE /experiments` | Delete all experiments |
+| `POST /run-inference` | Inference with uploaded ONNX/PKL model |
+| `GET /status` | Health check |

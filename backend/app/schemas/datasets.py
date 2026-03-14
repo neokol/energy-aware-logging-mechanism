@@ -1,6 +1,6 @@
 from pydantic import BaseModel, ConfigDict
 from datetime import datetime
-from backend.app.models.enums import ModelType
+from app.models.enums import ModelType
 
 class DatasetCreate(BaseModel):
     filename: str

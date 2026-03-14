@@ -1,7 +1,7 @@
-from backend.app.models.enums import ModelType
-from backend.app.services.base_model import BaseAIModel
-from backend.app.services.cnn_service import CNNModelService
-from backend.app.services.mlp_service import MLPModelService
+from app.models.enums import ModelType
+from app.services.base_model import BaseAIModel
+from app.services.cnn_service import CNNModelService
+from app.services.mlp_service import MLPModelService
 
 class ModelFactory:
     @staticmethod

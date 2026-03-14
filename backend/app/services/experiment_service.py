@@ -1,23 +1,37 @@
+import math
+import uuid
 import logging
 import pandas as pd
 from fastapi import HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from codecarbon import EmissionsTracker
 
-from backend.app.models.datasets import Dataset
-from backend.app.models.enums import PrecisionType
-from backend.app.models.experiments import Experiment
-from backend.app.services.base_model import BaseAIModel
+from app.core.platform_config import get_codecarbon_kwargs
+from app.models.datasets import Dataset
+from app.models.enums import PrecisionType
+from app.models.experiments import Experiment
+from app.services.base_model import BaseAIModel
 
 
 logger = logging.getLogger(__name__)
 
+def _safe_float(value):
+    """Return None if value is NaN or None, otherwise return float."""
+    if value is None:
+        return None
+    try:
+        f = float(value)
+        return None if math.isnan(f) else f
+    except (TypeError, ValueError):
+        return None
+
 async def execute_experiment(
-    session: AsyncSession, 
-    dataset: Dataset, 
-    df: pd.DataFrame, 
-    model_service: BaseAIModel, 
-    precision: PrecisionType
+    session: AsyncSession,
+    dataset: Dataset,
+    df: pd.DataFrame,
+    model_service: BaseAIModel,
+    precision: PrecisionType,
+    batch_id: str = None
 ) -> Experiment:
     """
     Orchestrates the full experiment: 
@@ -32,15 +46,14 @@ async def execute_experiment(
         # 1. Start Emissions Tracker
         tracker = EmissionsTracker(
             project_name=f"thesis_{dataset.ai_model}_{precision}",
-            measure_power_secs=0.1,
-            save_to_file=False
+            **get_codecarbon_kwargs()
         )
         
         tracker.start()
         
         # 2. Run Inference
         try:
-            latency, accuracy = model_service.run_inference(df, precision)
+            latency, accuracy, throughput = model_service.run_inference(df, precision)
         except Exception as e:
             tracker.stop()
             logger.error(f"Inference failed: {e}")
@@ -50,17 +63,30 @@ async def execute_experiment(
         tracker.stop()
         data = tracker.final_emissions_data
 
+        cpu_energy = _safe_float(data.cpu_energy) or 0.0
+        ram_energy = _safe_float(data.ram_energy) or 0.0
+        gpu_energy = _safe_float(getattr(data, 'gpu_energy', None)) or 0.0
+
+        # codecarbon may return NaN for energy_consumed on Apple Silicon —
+        # fall back to summing component energies
+        energy_consumed = _safe_float(data.energy_consumed) or (cpu_energy + ram_energy + gpu_energy)
+
+        # emissions may also be NaN — estimate from energy × default carbon intensity (Greece ~0.4 kg/kWh)
+        emissions = _safe_float(data.emissions) or (energy_consumed * 0.4)
+
         # 4. Save to Database
         new_experiment = Experiment(
+            batch_id=batch_id or str(uuid.uuid4()),
             dataset_id=dataset.id,
             precision=precision,
             accuracy=accuracy,
             latency_seconds=latency,
-            emissions_kg=data.emissions,
-            energy_consumed_kwh=data.energy_consumed,
-            cpu_energy_kwh=data.cpu_energy,
-            ram_energy_kwh=data.ram_energy,
-            duration=data.duration
+            throughput_samples_per_sec=throughput,
+            emissions_kg=emissions,
+            energy_consumed_kwh=energy_consumed,
+            cpu_energy_kwh=cpu_energy,
+            ram_energy_kwh=ram_energy,
+            duration=_safe_float(data.duration)
         )
         
         session.add(new_experiment)

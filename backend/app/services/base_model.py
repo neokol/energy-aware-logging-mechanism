@@ -12,9 +12,9 @@ class BaseAIModel(ABC):
         pass
 
     @abstractmethod
-    def run_inference(self, df: pd.DataFrame, precision: str) -> tuple[float, float]:
+    def run_inference(self, df: pd.DataFrame, precision: str) -> tuple[float, float, float]:
         """
-        Runs the model and returns (latency, accuracy).
+        Runs the model and returns (latency, accuracy, throughput_samples_per_sec).
         precision: 'fp32' or 'int8'
         """
         pass

@@ -3,8 +3,8 @@ from datetime import datetime
 from sqlalchemy import Column, Float, ForeignKey, String, DateTime, Enum
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
-from backend.app.database.db import Base
-from backend.app.models.enums import PrecisionType
+from app.database.db import Base
+from app.models.enums import PrecisionType
 
 class Experiment(Base):
     __tablename__ = "experiments"
@@ -13,7 +13,7 @@ class Experiment(Base):
     
     batch_id = Column(String(36), nullable=False, index=True)
     dataset_id = Column(String(36), ForeignKey("datasets.id"), nullable=False)
-    model_id = Column(String(36), ForeignKey("models.id"), nullable=False)
+    model_id = Column(String(36), ForeignKey("models.id"), nullable=True)
     precision = Column(Enum(PrecisionType), nullable=False)
     
     # Metrics
@@ -24,9 +24,10 @@ class Experiment(Base):
     ram_energy_kwh = Column(Float, nullable=True)
     duration = Column(Float, nullable=True)
     accuracy = Column(Float, nullable=True)
-    cpu_power_watt = Column(Float, nullable=True)     
+    cpu_power_watt = Column(Float, nullable=True)
     cpu_load_pct = Column(Float, nullable=True)
     carbon_intensity = Column(Float, nullable=True)
+    throughput_samples_per_sec = Column(Float, nullable=True)
     
     created_at = Column(DateTime, default=datetime.utcnow)
     

@@ -4,8 +4,8 @@ from sqlalchemy import Column, ForeignKey, String, Text, DateTime, Enum
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 
-from backend.app.database.db import Base
-from backend.app.models.enums import AlgorithmType
+from app.database.db import Base
+from app.models.enums import AlgorithmType
 
 
 class Model(Base):

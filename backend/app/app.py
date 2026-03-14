@@ -4,14 +4,16 @@ from dotenv import load_dotenv
 import os
 import logging
 
-from backend.app.core.logging import setup_logging
-from backend.app.database.db import  create_db_and_tables
-from backend.app.routers import dataset, generate, models, experiments
+from app.core.logging import setup_logging
+from app.core.platform_config import log_platform_info
+from app.database.db import create_db_and_tables
+from app.routers import dataset, generate, models, experiments
 
 load_dotenv()
 
 setup_logging()
 logger = logging.getLogger(__name__)
+log_platform_info()
 
 UPLOAD_DIR = os.getenv("UPLOAD_DIR")
 os.makedirs(UPLOAD_DIR, exist_ok=True)

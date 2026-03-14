@@ -8,15 +8,15 @@ def create_mlp_dataset():
     
     
     data = np.random.randn(rows, cols).astype(np.float32)
-    
-    
-    col_names = [f"feature_{i}" for i in range(cols)]
-    
-    df = pd.DataFrame(data, columns=col_names)
-    
+    labels = np.random.randint(0, 2, size=(rows,))  # binary labels: 0 or 1
+
+    col_names = ["label"] + [f"feature_{i}" for i in range(cols)]
+    df = pd.DataFrame(np.column_stack([labels, data]), columns=col_names)
+    df["label"] = df["label"].astype(int)
+
     filename = "maintenance_data.csv"
     df.to_csv(filename, index=False)
-    print(f"Created '{filename}' with shape ({rows}, {cols})")
+    print(f"Created '{filename}' with shape ({rows}, {cols + 1}) including label column")
 
 if __name__ == "__main__":
     create_mlp_dataset()

@@ -1,7 +1,7 @@
 # setup_models.py
 import torch
 import os
-from backend.ai_models.mlp import MaintenanceMLP
+from ai_models.mlp import MaintenanceMLP
 
 
 MODEL_DIR = "trained_models"

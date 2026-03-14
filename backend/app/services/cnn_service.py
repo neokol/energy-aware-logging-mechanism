@@ -5,14 +5,14 @@ import pandas as pd
 import numpy as np
 from dotenv import load_dotenv
 
-from backend.app.services.base_model import BaseAIModel
-from backend.ai_models.cnn import SimpleCNN
-from backend.app.models.enums import PrecisionType
+from app.services.base_model import BaseAIModel
+from ai_models.cnn import SimpleCNN
+from app.models.enums import PrecisionType
 
 
 load_dotenv()
 
-CNN_MODEL_PATH = os.getenv("CNN_MODEL_PATH", "trained_models/cnn_mnist_v1.pth.pth")
+CNN_MODEL_PATH = os.getenv("CNN_MODEL_PATH", "trained_models/cnn_mnist_v1.pth")
 
 class CNNModelService(BaseAIModel):
     
@@ -35,10 +35,12 @@ class CNNModelService(BaseAIModel):
         # Drop non-numeric columns (like 'label' if it exists in your CSV)
         df_numeric = df.select_dtypes(include=[np.number])
         
-        # If dataset has 785 columns, the first one is likely the label. Drop it.
+        # If dataset has 785 columns, the first one is the label — extract it.
         if df_numeric.shape[1] == 785:
-            data_values = df_numeric.iloc[:, 1:].values # Keep columns 1 to end
+            labels = torch.tensor(df_numeric.iloc[:, 0].values, dtype=torch.long)
+            data_values = df_numeric.iloc[:, 1:].values
         else:
+            labels = None
             data_values = df_numeric.values
 
         # Convert to Tensor
@@ -61,6 +63,8 @@ class CNNModelService(BaseAIModel):
         # 3. QUANTIZATION (The Thesis Experiment)
         if precision == PrecisionType.INT8.value:
             print("--- Applying INT8 Quantization (CNN) ---")
+            from app.core.platform_config import get_quantization_engine
+            torch.backends.quantized.engine = get_quantization_engine()
             model = torch.quantization.quantize_dynamic(
                 model, {torch.nn.Linear, torch.nn.Conv2d}, dtype=torch.qint8
             )
@@ -77,8 +81,17 @@ class CNNModelService(BaseAIModel):
 
         end_time = time.time()
         latency = end_time - start_time
-        
-        # Dummy accuracy for Phase 2 (since we don't check labels against predictions yet)
-        accuracy = 0.98 if precision == "fp32" else 0.96
 
-        return latency, accuracy
+        n_loops = 5
+        n_samples = len(df)
+        throughput = (n_samples * n_loops) / latency if latency > 0 else 0.0
+
+        if labels is not None:
+            with torch.no_grad():
+                final_output = model(input_tensor)
+            predictions = final_output.argmax(dim=1)
+            accuracy = float((predictions == labels).sum()) / len(labels)
+        else:
+            accuracy = 0.98 if precision == PrecisionType.FP32.value else 0.96
+
+        return latency, accuracy, throughput

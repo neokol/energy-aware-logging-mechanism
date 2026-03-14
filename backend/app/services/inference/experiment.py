@@ -2,10 +2,10 @@ import uuid
 import pandas as pd
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
-from backend.app.models.datasets import Dataset
-from backend.app.models.experiments import Experiment
-from backend.app.models.model import Model
-from backend.app.services.inference.inference_factory import InferenceFactory
+from app.models.datasets import Dataset
+from app.models.experiments import Experiment
+from app.models.model import Model
+from app.services.inference.inference_factory import InferenceFactory
 
 
 async def run_experiment_logic(session: AsyncSession , model_id: str, dataset_id: str):
