@@ -1,31 +1,31 @@
 # 🌿 Energy-Aware Logging Mechanism (Thesis Prototype)
+
 This project is the implementation of an Energy-Aware Logging Mechanism for AI Algorithms. It is designed to measure, record, and analyze the energy consumption (CO2 footprint) of different AI model configurations
 
 Built with FastAPI, CodeCarbon, and SQLite.
 
 ## 🚀 Current Features
+
 - Dataset Management: Upload and register CSV datasets for experiments.
 
 - Energy Tracking: Uses CodeCarbon to track CPU/RAM energy usage during algorithm execution.
 
 - AI Simulation: Simulates Neural Network Forward Passes to compare:
+  1. FP32 (Standard): High precision, higher energy.
 
-    1. FP32 (Standard): High precision, higher energy.
-
-    2. Int8 (Quantized): Lower precision, potential energy savings.
+  2. Int8 (Quantized): Lower precision, potential energy savings.
 
 - Metric Logging: Automatically calculates and saves:
+  1. Latnecy (Seconds)
 
-    1. Latnecy (Seconds)
+  2. Accuracy (vs Ground Truth)
 
-    2. Accuracy (vs Ground Truth)
+  3. Energy Consumed (kWh)
 
-    3. Energy Consumed (kWh)
-
-    2. CO2 Emissions (kg)
-
+  4. CO2 Emissions (kg)
 
 ## 🛠️ Tech Stack
+
 - Language: Python 3.10+
 
 - Framework: FastAPI
@@ -41,16 +41,14 @@ Built with FastAPI, CodeCarbon, and SQLite.
 ## ⚙️ Installation & Setup
 
 1. Clone & Install Dependencies
-    If you are using uv:
+   If you are using uv:
 
-    ```
-    uv sync
-    ```
-
+   ```
+   uv sync
+   ```
 
 2. Environment Configuration
-Create a .env file in the root directory:
-
+   Create a .env file in the root directory:
 
 ```
 HOST=0.0.0.0
@@ -61,6 +59,7 @@ UPLOAD_DIR=uploaded_datasets
 ```
 
 ## 🏃‍♂️ Running the Application
+
 Start the server using Uvicorn:
 
 ```
@@ -70,6 +69,7 @@ uv run uvicorn app.main:app --reload
 The API will be available at: http://127.0.0.1:8000 Interactive Documentation (Swagger UI): http://127.0.0.1:8000/docs
 
 ## 🧪 How to Run an Experiment
+
 Step 1: Upload a Dataset
 
 Endpoint: POST /datasets
@@ -87,13 +87,15 @@ Body:
 ```
 {
   "dataset_id": "YOUR_DATASET_ID_HERE",
-  "model_type": "fp32" 
+  "model_type": "fp32"
 }
 ```
+
 (Options for model_type: "fp32" or "int8")
 
 Step 3: Check Results
 The API returns a JSON object with the measurement results:
+
 ```
 {
   "dataset_id": "...",
@@ -104,8 +106,6 @@ The API returns a JSON object with the measurement results:
   "energy_consumed_kwh": 0.000042
 }
 ```
-
-
 
 ## 📂 Project Structure
 
@@ -128,3 +128,5 @@ The API returns a JSON object with the measurement results:
 Console: Real-time updates.
 
 File (logs/app.log): Persistent history of all uploads and experiments. Useful for auditing thesis data.
+
+### New workflow
