@@ -1,3 +1,12 @@
+import ssl
+from backend.app.pytorch_models.helpers import train_pytorch_model
+from backend.app.pytorch_models.models import AdultCNN1D, AdultMLP
+import joblib
+import torch
+import torch.nn as nn
+import torch.optim as optim
+from torch.utils.data import DataLoader, TensorDataset
+
 import logging
 from fastapi import APIRouter,  HTTPException
 
@@ -26,11 +35,20 @@ import onnx
 from onnxruntime.quantization import quantize_dynamic, QuantType
 
 
-
+# --- SSL WORKAROUND FOR MACOS (M4) ---
+try:
+    _create_unverified_https_context = ssl._create_unverified_context
+except AttributeError:
+    pass
+else:
+    ssl._create_default_https_context = _create_unverified_https_context
+# -------------------------------------
 
 load_dotenv()
 
 ADULT_DATA_URL = os.getenv("ADULT_DATA_URL")
+ARTIFACTS_DIR = "artifacts_deep_learning"
+os.makedirs(ARTIFACTS_DIR, exist_ok=True)
 
 logger = logging.getLogger(__name__)
 
@@ -192,3 +210,158 @@ async def generate_california_artifacts():
         import traceback
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"Artifact generation failed: {str(e)}")
+    
+@router.post("/generate_adult_deep_learning_artifacts")
+async def generate_adult_deep_learning_artifacts():
+    try:
+        logger.info("🎬 Starting Adult Deep Learning Artifact Generation (PyTorch -> ONNX)...")
+        
+        # 1. Load Data
+        logger.info("⏳ Fetching Adult dataset from OpenML...")
+        data = fetch_openml(name='adult', version=2, as_frame=True, parser='auto')
+        X = data.data
+        # Μετατροπή target σε binary (0 ή 1)
+        y = (data.target.astype(str).str.strip() == '>50K').astype(int).values
+        
+        numeric_features = ['age', 'capital-gain', 'capital-loss', 'hours-per-week']
+        categorical_features = ['workclass', 'education', 'marital-status', 'occupation', 'relationship', 'race', 'sex', 'native-country']
+
+        # Ensure correct column ordering before preprocessing
+        X = X[numeric_features + categorical_features].copy()
+        
+        # Μετατροπή κατηγορικών σε string για συμβατότητα
+        for col in categorical_features:
+            X[col] = X[col].astype(str)
+
+        # Split Data
+        X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+
+        # Σώζουμε το raw Test Data σε CSV για το upload του Dataset
+        test_csv_path = os.path.join(ARTIFACTS_DIR, "adult_dl_test.csv")
+        logger.info(f"💾 Saving raw test data to {test_csv_path}...")
+        test_df = X_test.copy()
+        test_df['target'] = y_test 
+        test_df.to_csv(test_csv_path, index=False)
+
+        # 2. Define Preprocessing (Crucial for Tabular data even with PyTorch)
+        logger.info("⚙️ Defining and fitting Preprocessor (Sklearn)...")
+        numeric_transformer = Pipeline(steps=[
+            ('imputer', SimpleImputer(strategy='median')),
+            ('scaler', StandardScaler())
+        ])
+
+        categorical_transformer = Pipeline(steps=[
+            ('imputer', SimpleImputer(strategy='constant', fill_value='missing')),
+            ('onehot', OneHotEncoder(handle_unknown='ignore', sparse_output=False))
+        ])
+
+        preprocessor = ColumnTransformer(
+            transformers=[
+                ('num', numeric_transformer, numeric_features),
+                ('cat', categorical_transformer, categorical_features)
+            ])
+
+        # Fit on training data
+        preprocessor.fit(X_train)
+        
+        # ΣΩΖΟΥΜΕ ΤΟΝ PREPROCESSOR! Απαραίτητο για το backend inference.
+        preprocessor_path = os.path.join(ARTIFACTS_DIR, "adult_preprocessor.joblib")
+        joblib.dump(preprocessor, preprocessor_path)
+        logger.info(f"💾 Preprocessor saved to {preprocessor_path}")
+
+        # Transform data for training
+        X_train_processed = preprocessor.transform(X_train).astype(np.float32)
+        
+        num_features = X_train_processed.shape[1]
+        logger.info(f"✅ Preprocessing complete. Feature dimension after One-Hot: {num_features}")
+
+        # 3. Prepare PyTorch Tensors & DataLoaders
+        X_train_tensor = torch.from_numpy(X_train_processed)
+        y_train_tensor = torch.from_numpy(y_train).float()
+        
+        train_dataset = TensorDataset(X_train_tensor, y_train_tensor)
+        train_loader = DataLoader(train_dataset, batch_size=64, shuffle=True)
+
+        # Dummies for ONNX export
+        dummy_input_mlp = torch.randn(1, num_features)
+        dummy_input_cnn = torch.randn(1, 1, num_features) # (Batch, Channels, Features)
+
+        # ======================================================================
+        # PART A: MLP (Fully Connected)
+        # ======================================================================
+        logger.info("🧠 Training Adult MLP (PyTorch)...")
+        mlp_model = AdultMLP(input_dim=num_features)
+        train_pytorch_model(mlp_model, train_loader, epochs=5) # 5 epochs is enough for functional artifacts
+        mlp_model.eval()
+
+        # Export MLP to ONNX FP32
+        mlp_fp32_path = os.path.join(ARTIFACTS_DIR, "adult_mlp_fp32.onnx")
+        logger.info(f"🔄 Exporting MLP to ONNX (FP32): {mlp_fp32_path}")
+        torch.onnx.export(
+            mlp_model, 
+            dummy_input_mlp, 
+            mlp_fp32_path,
+            export_params=True,
+            opset_version=12,
+            do_constant_folding=True,
+            input_names = ['input'],   # input name
+            output_names = ['output'], # output name
+            dynamic_axes={'input' : {0 : 'batch_size'}, 'output' : {0 : 'batch_size'}} # allow dynamic batch size
+        )
+
+        # Quantize MLP to INT8
+        mlp_int8_path = os.path.join(ARTIFACTS_DIR, "adult_mlp_int8.onnx")
+        logger.info(f"⚡ Quantizing MLP to INT8: {mlp_int8_path}")
+        quantize_dynamic(mlp_fp32_path, mlp_int8_path, weight_type=QuantType.QUInt8)
+
+        # ======================================================================
+        # PART B: 1D CNN
+        # ======================================================================
+        logger.info("📡 Training Adult 1D CNN (PyTorch)...")
+        cnn_model = AdultCNN1D(input_dim=num_features)
+        
+        # Prepare data for CNN training (requires reshape to include channel dim)
+        X_train_cnn = X_train_tensor.unsqueeze(1) # (Batch, Features) -> (Batch, 1, Features)
+        train_dataset_cnn = TensorDataset(X_train_cnn, y_train_tensor)
+        train_loader_cnn = DataLoader(train_dataset_cnn, batch_size=64, shuffle=True)
+        
+        train_pytorch_model(cnn_model, train_loader_cnn, epochs=5)
+        cnn_model.eval()
+
+        # Export CNN to ONNX FP32
+        cnn_fp32_path = os.path.join(ARTIFACTS_DIR, "adult_cnn_fp32.onnx")
+        logger.info(f"🔄 Exporting CNN to ONNX (FP32): {cnn_fp32_path}")
+        torch.onnx.export(
+            cnn_model, 
+            dummy_input_cnn, # Dummy is already 3D (1, 1, Features)
+            cnn_fp32_path,
+            export_params=True,
+            opset_version=12,
+            do_constant_folding=True,
+            input_names = ['input'],
+            output_names = ['output'],
+            # CRITICAL: Define batch and spatial dim as dynamic for inference
+            dynamic_axes={'input' : {0 : 'batch_size'}, 'output' : {0 : 'batch_size'}} 
+        )
+
+        # Quantize CNN to INT8
+        cnn_int8_path = os.path.join(ARTIFACTS_DIR, "adult_cnn_int8.onnx")
+        logger.info(f"⚡ Quantizing CNN to INT8: {cnn_int8_path}")
+        quantize_dynamic(cnn_fp32_path, cnn_int8_path, weight_type=QuantType.QUInt8)
+
+        logger.info("✅ SUCCESS! Adult Deep Learning artifacts created in 'artifacts_deep_learning/'")
+        return {
+            "message": "Adult Deep Learning artifacts generated successfully",
+            "files": [
+                test_csv_path,
+                preprocessor_path,
+                mlp_fp32_path, mlp_int8_path,
+                cnn_fp32_path, cnn_int8_path
+            ]
+        }
+
+    except Exception as e:
+        logger.error(f"❌ Error during artifact generation: {e}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))

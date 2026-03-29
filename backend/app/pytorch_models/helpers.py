@@ -1,0 +1,21 @@
+import joblib
+import torch
+import torch.nn as nn
+import torch.optim as optim
+from torch.utils.data import DataLoader, TensorDataset
+
+def train_pytorch_model(model, train_loader, epochs=10):
+    criterion = nn.BCELoss() # Binary Cross Entropy
+    optimizer = optim.Adam(model.parameters(), lr=0.001)
+    
+    model.train()
+    for epoch in range(epochs):
+        running_loss = 0.0
+        for inputs, labels in train_loader:
+            optimizer.zero_grad()
+            outputs = model(inputs)
+            loss = criterion(outputs, labels.unsqueeze(1))
+            loss.backward()
+            optimizer.step()
+            running_loss += loss.item()
+        # Optional: logger.info(f"Epoch {epoch+1}/{epochs} - Loss: {running_loss/len(train_loader):.4f}")
