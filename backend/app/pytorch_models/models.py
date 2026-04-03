@@ -4,9 +4,9 @@ import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import DataLoader, TensorDataset
 
-class AdultMLP(nn.Module):
+class AdultMLP1(nn.Module):
     def __init__(self, input_dim):
-        super(AdultMLP, self).__init__()
+        super(AdultMLP1, self).__init__()
         self.network = nn.Sequential(
             nn.Linear(input_dim, 64),
             nn.ReLU(),

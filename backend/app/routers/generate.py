@@ -1,6 +1,6 @@
 import ssl
 from backend.app.pytorch_models.helpers import train_pytorch_model
-from backend.app.pytorch_models.models import AdultCNN1D, AdultMLP
+from backend.app.pytorch_models.models import AdultCNN1D, AdultMLP1
 import joblib
 import torch
 import torch.nn as nn
@@ -263,17 +263,15 @@ async def generate_adult_deep_learning_artifacts():
 
         # Fit on training data
         preprocessor.fit(X_train)
-        
-        # ΣΩΖΟΥΜΕ ΤΟΝ PREPROCESSOR! Απαραίτητο για το backend inference.
-        preprocessor_path = os.path.join(ARTIFACTS_DIR, "adult_preprocessor.joblib")
-        joblib.dump(preprocessor, preprocessor_path)
-        logger.info(f"💾 Preprocessor saved to {preprocessor_path}")
-
-        # Transform data for training
         X_train_processed = preprocessor.transform(X_train).astype(np.float32)
         
         num_features = X_train_processed.shape[1]
         logger.info(f"✅ Preprocessing complete. Feature dimension after One-Hot: {num_features}")
+
+        # Save preprocessor
+        preprocessor_path = os.path.join(ARTIFACTS_DIR, "adult_preprocessor.joblib")
+        joblib.dump(preprocessor, preprocessor_path)
+        logger.info(f"💾 Preprocessor saved to {preprocessor_path}")
 
         # 3. Prepare PyTorch Tensors & DataLoaders
         X_train_tensor = torch.from_numpy(X_train_processed)
@@ -290,7 +288,7 @@ async def generate_adult_deep_learning_artifacts():
         # PART A: MLP (Fully Connected)
         # ======================================================================
         logger.info("🧠 Training Adult MLP (PyTorch)...")
-        mlp_model = AdultMLP(input_dim=num_features)
+        mlp_model = AdultMLP1(input_dim=num_features)
         train_pytorch_model(mlp_model, train_loader, epochs=5) # 5 epochs is enough for functional artifacts
         mlp_model.eval()
 
@@ -304,15 +302,23 @@ async def generate_adult_deep_learning_artifacts():
             export_params=True,
             opset_version=12,
             do_constant_folding=True,
-            input_names = ['input'],   # input name
-            output_names = ['output'], # output name
-            dynamic_axes={'input' : {0 : 'batch_size'}, 'output' : {0 : 'batch_size'}} # allow dynamic batch size
+            input_names=['input'],
+            output_names=['output'],
+            dynamic_axes={'input': {0: 'batch_size'}, 'output': {0: 'batch_size'}}
         )
+
+        # temp_model = onnx.load(mlp_fp32_path)
+        m = onnx.load(mlp_fp32_path)
+        # Διαγράφουμε τις πληροφορίες σχήματος που προκαλούν το conflict
+        for _ in range(len(m.graph.value_info)): m.graph.value_info.pop()
+        onnx.save(m, mlp_fp32_path)
+
+        # onnx.save_model(temp_model, mlp_fp32_path, save_as_external_data=False)
 
         # Quantize MLP to INT8
         mlp_int8_path = os.path.join(ARTIFACTS_DIR, "adult_mlp_int8.onnx")
         logger.info(f"⚡ Quantizing MLP to INT8: {mlp_int8_path}")
-        quantize_dynamic(mlp_fp32_path, mlp_int8_path, weight_type=QuantType.QUInt8)
+        quantize_dynamic(mlp_fp32_path, mlp_int8_path, weight_type=QuantType.QUInt8, extra_options={'EnableSubgraph': True})
 
         # ======================================================================
         # PART B: 1D CNN
@@ -333,16 +339,21 @@ async def generate_adult_deep_learning_artifacts():
         logger.info(f"🔄 Exporting CNN to ONNX (FP32): {cnn_fp32_path}")
         torch.onnx.export(
             cnn_model, 
-            dummy_input_cnn, # Dummy is already 3D (1, 1, Features)
+            dummy_input_cnn, 
             cnn_fp32_path,
             export_params=True,
             opset_version=12,
-            do_constant_folding=True,
-            input_names = ['input'],
-            output_names = ['output'],
-            # CRITICAL: Define batch and spatial dim as dynamic for inference
-            dynamic_axes={'input' : {0 : 'batch_size'}, 'output' : {0 : 'batch_size'}} 
+            input_names=['input'],
+            output_names=['output'],
+            dynamic_axes={'input': {0: 'batch_size'}, 'output': {0: 'batch_size'}}
         )
+
+        m = onnx.load(cnn_fp32_path)
+        # Διαγράφουμε τις πληροφορίες σχήματος που προκαλούν το conflict
+        for _ in range(len(m.graph.value_info)): m.graph.value_info.pop()
+        onnx.save(m, cnn_fp32_path)
+        # temp_model_cnn = onnx.load(cnn_fp32_path)
+        # onnx.save_model(temp_model_cnn, cnn_fp32_path, save_as_external_data=False)
 
         # Quantize CNN to INT8
         cnn_int8_path = os.path.join(ARTIFACTS_DIR, "adult_cnn_int8.onnx")
