@@ -1,4 +1,6 @@
+import os
 import time
+import joblib
 import numpy as np
 import logging
 import psutil
@@ -101,9 +103,16 @@ class RunONNXInference(InferenceStrategy):
                 real_col_name = col_map[model_col_name]
                 data = df[real_col_name].values
                 
+                expected_shape = inp.shape
+
                 # Reshape if necessary (N,) -> (N, 1)
                 if len(data.shape) == 1:
                     data = data.reshape(-1, 1)
+
+                if len(expected_shape) == 3 and len(data.shape) == 2:
+                    # Μετατροπή από (N, Features) σε (N, 1, Features)
+                    data = data.reshape(data.shape[0], 1, data.shape[1])
+                    logger.info(f"📐 Reshaped input '{model_col_name}' for CNN to {data.shape}")
                 
                 # Enforce Types based on ONNX expectation
                 if 'string' in inp.type:
@@ -115,7 +124,24 @@ class RunONNXInference(InferenceStrategy):
                     
                 onnx_inputs[model_col_name] = data
             else:
-                print(f"⚠️ Warning: Model expects '{model_col_name}' but it is missing from CSV!")
+                if inp.name == "input":
+                    preprocessor_path = os.path.join("artifacts_deep_learning", "adult_preprocessor.joblib")
+                    if os.path.exists(preprocessor_path) and "workclass" in df.columns:
+                        logger.info("🔧 Applying Joblib Preprocessor for PyTorch Model...")
+                        preprocessor = joblib.load(preprocessor_path)
+                        # Το transform μετατρέπει τα strings ('Private') σε One-Hot Encoding νούμερα
+                        processed_data = preprocessor.transform(df)
+                        data = processed_data.astype(np.float32)
+                    else:
+                        data = df.values.astype(np.float32)
+                    expected_shape = inp.shape
+                    
+                    if len(expected_shape) == 3 and len(data.shape) == 2:
+                        data = data.reshape(data.shape[0], 1, data.shape[1])
+                    
+                    onnx_inputs[inp.name] = data
+                else:
+                    print(f"⚠️ Warning: Model expects '{model_col_name}' but it is missing from CSV!")
                 
         return onnx_inputs
 
