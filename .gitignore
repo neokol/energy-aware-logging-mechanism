@@ -243,3 +243,5 @@ adult_*
 emissions.csv*
 california_*
 artifacts_deep_learning
+uploaded_models
+powermetrics_log.txt
