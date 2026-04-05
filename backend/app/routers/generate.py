@@ -1,6 +1,6 @@
 import ssl
 from backend.app.pytorch_models.helpers import train_pytorch_model
-from backend.app.pytorch_models.models import AdultCNN1D, AdultMLP1
+from backend.app.pytorch_models.models import AdultCNN1D, AdultMLP1, HousingCNN1D, HousingMLP
 import joblib
 import torch
 import torch.nn as nn
@@ -373,6 +373,125 @@ async def generate_adult_deep_learning_artifacts():
 
     except Exception as e:
         logger.error(f"❌ Error during artifact generation: {e}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+    
+@router.post("/generate_california_housing_deep_learning_artifacts")
+async def generate_housing_deep_learning_artifacts():
+    try:
+        logger.info("🎬 Starting California Housing DL Artifact Generation...")
+        
+        # 1. Load Data
+        logger.info("⏳ Fetching California Housing dataset...")
+        data = fetch_california_housing(as_frame=True)
+        X = data.data
+        y = data.target.values # Continuous targets for regression
+        
+        # Split Data
+        X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+
+        # Save raw Test Data
+        test_csv_path = os.path.join(ARTIFACTS_DIR, "housing_dl_test.csv")
+        test_df = X_test.copy()
+        test_df['target'] = y_test 
+        test_df.to_csv(test_csv_path, index=False)
+
+        # 2. Preprocessing (Only numerical features, so much simpler!)
+        logger.info("⚙️ Defining and fitting Preprocessor...")
+        preprocessor = Pipeline(steps=[
+            ('imputer', SimpleImputer(strategy='median')),
+            ('scaler', StandardScaler())
+        ])
+
+        # Fit and Transform
+        preprocessor.fit(X_train)
+        X_train_processed = preprocessor.transform(X_train).astype(np.float32)
+        num_features = X_train_processed.shape[1] # Will be exactly 8
+
+        # Save preprocessor
+        preprocessor_path = os.path.join(ARTIFACTS_DIR, "housing_preprocessor.joblib")
+        joblib.dump(preprocessor, preprocessor_path)
+
+        # 3. Prepare PyTorch Tensors & DataLoaders
+        X_train_tensor = torch.from_numpy(X_train_processed)
+        y_train_tensor = torch.from_numpy(y_train).float()
+        
+        train_dataset = TensorDataset(X_train_tensor, y_train_tensor)
+        train_loader = DataLoader(train_dataset, batch_size=64, shuffle=True)
+
+        # Dummies for ONNX export
+        dummy_input_mlp = torch.randn(1, num_features)
+        dummy_input_cnn = torch.randn(1, 1, num_features)
+
+        # ======================================================================
+        # PART A: MLP (Regression)
+        # ======================================================================
+        logger.info("🧠 Training Housing MLP...")
+        mlp_model = HousingMLP(input_dim=num_features)
+        
+        # Notice we pass task="regression" here
+        train_pytorch_model(mlp_model, train_loader, epochs=5, task="regression") 
+        mlp_model.eval()
+
+        # Export MLP
+        mlp_fp32_path = os.path.join(ARTIFACTS_DIR, "housing_mlp_fp32.onnx")
+        torch.onnx.export(
+            mlp_model, dummy_input_mlp, mlp_fp32_path,
+            export_params=True, opset_version=12,
+            input_names=['input'], output_names=['output'],
+            dynamic_axes={'input': {0: 'batch_size'}, 'output': {0: 'batch_size'}}
+        )
+
+        # Clean shape info for quantization
+        m = onnx.load(mlp_fp32_path)
+        for _ in range(len(m.graph.value_info)): m.graph.value_info.pop()
+        onnx.save(m, mlp_fp32_path)
+
+        # Quantize MLP
+        mlp_int8_path = os.path.join(ARTIFACTS_DIR, "housing_mlp_int8.onnx")
+        quantize_dynamic(mlp_fp32_path, mlp_int8_path, weight_type=QuantType.QUInt8, extra_options={'EnableSubgraph': True})
+
+        # ======================================================================
+        # PART B: 1D CNN (Regression)
+        # ======================================================================
+        logger.info("📡 Training Housing 1D CNN...")
+        cnn_model = HousingCNN1D(input_dim=num_features)
+        
+        X_train_cnn = X_train_tensor.unsqueeze(1) 
+        train_dataset_cnn = TensorDataset(X_train_cnn, y_train_tensor)
+        train_loader_cnn = DataLoader(train_dataset_cnn, batch_size=64, shuffle=True)
+        
+        # Notice we pass task="regression" here too
+        train_pytorch_model(cnn_model, train_loader_cnn, epochs=5, task="regression")
+        cnn_model.eval()
+
+        # Export CNN
+        cnn_fp32_path = os.path.join(ARTIFACTS_DIR, "housing_cnn_fp32.onnx")
+        torch.onnx.export(
+            cnn_model, dummy_input_cnn, cnn_fp32_path,
+            export_params=True, opset_version=12,
+            input_names=['input'], output_names=['output'],
+            dynamic_axes={'input': {0: 'batch_size'}, 'output': {0: 'batch_size'}}
+        )
+
+        # Clean shape info for quantization
+        m_cnn = onnx.load(cnn_fp32_path)
+        for _ in range(len(m_cnn.graph.value_info)): m_cnn.graph.value_info.pop()
+        onnx.save(m_cnn, cnn_fp32_path)
+
+        # Quantize CNN
+        cnn_int8_path = os.path.join(ARTIFACTS_DIR, "housing_cnn_int8.onnx")
+        quantize_dynamic(cnn_fp32_path, cnn_int8_path, weight_type=QuantType.QUInt8, extra_options={'EnableSubgraph': True})
+
+        logger.info("✅ SUCCESS! Housing Deep Learning artifacts created.")
+        return {
+            "message": "Housing Deep Learning artifacts generated successfully",
+            "files": [test_csv_path, preprocessor_path, mlp_fp32_path, mlp_int8_path, cnn_fp32_path, cnn_int8_path]
+        }
+
+    except Exception as e:
+        logger.error(f"❌ Error: {e}")
         import traceback
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
