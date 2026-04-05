@@ -49,6 +49,7 @@ class AdultCNN1D(nn.Module):
         # However, we will handle the reshape in the Inference Strategy,
         # so here we assume x comes in as (Batch, 1, Features)
         x = self.conv_subsytem(x)
-        x = torch.flatten(x, 1) # Flatten all dimensions except batch
+        # x = torch.flatten(x, 1) # Flatten all dimensions except batch
+        x = x.view(x.size(0), -1)
         x = self.fc_subsystem(x)
         return x

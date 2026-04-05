@@ -68,3 +68,25 @@ async def list_models(session: AsyncSession = Depends(get_async_session)):
     except Exception as e:
         logger.error(f"Error fetching models: {e}")
         raise HTTPException(status_code=500, detail="Could not fetch models")
+    
+@router.delete("/models")
+async def delete_models(session:AsyncSession = Depends(get_async_session)):
+    try:
+        logger.info("Clear all models from database")
+        result = await session.execute(select(Model))
+        models = result.scalar_one_or_none()
+        
+        if not models:
+            logger.warning(f"Models table is already empty.")
+            raise HTTPException(status_code=404, detail="Models not found")
+        
+        
+        await session.delete(models)
+        await session.commit()
+        
+        logger.info(f"Models deleted successfully from database")
+        
+        return {"detail": "Dataset deleted successfully"}
+    except Exception as e:
+        logger.error(f"Error deleting models: {e}")
+        raise HTTPException(status_code=500, detail="Could not delete models")

@@ -145,6 +145,25 @@ class RunONNXInference(InferenceStrategy):
                 
         return onnx_inputs
 
+    # def _calculate_accuracy(self, y_true, y_pred):
+    #     if y_true is None: 
+    #         return 0.0
+            
+    #     y_true = np.array(y_true).flatten()
+    #     y_pred = np.array(y_pred).flatten()
+
+    #     # Check if the target data is continuous (floats) or categorical (ints/strings)
+    #     if y_true.dtype.kind == 'f':
+    #         # It's Regression (California Housing)
+    #         # Use R-squared. 1.0 is perfect, 0.0 is terrible.
+    #         # We max it with 0.0 so we don't get negative accuracy in the UI.
+    #         score = r2_score(y_true, y_pred)
+    #         return max(0.0, float(score)) 
+    #     else:
+    #         # It's Classification (Adult Income)
+    #         # Use standard accuracy percentage.
+    #         return float(accuracy_score(y_true, y_pred))
+
     def _calculate_accuracy(self, y_true, y_pred):
         if y_true is None: 
             return 0.0
@@ -152,14 +171,21 @@ class RunONNXInference(InferenceStrategy):
         y_true = np.array(y_true).flatten()
         y_pred = np.array(y_pred).flatten()
 
-        # Check if the target data is continuous (floats) or categorical (ints/strings)
-        if y_true.dtype.kind == 'f':
-            # It's Regression (California Housing)
-            # Use R-squared. 1.0 is perfect, 0.0 is terrible.
-            # We max it with 0.0 so we don't get negative accuracy in the UI.
-            score = r2_score(y_true, y_pred)
-            return max(0.0, float(score)) 
-        else:
-            # It's Classification (Adult Income)
-            # Use standard accuracy percentage.
+        # Ελέγχουμε αν είναι Classification βρίσκοντας πόσες μοναδικές τιμές έχει το target
+        # Στο Adult (Binary Classification) θα έχει μόνο 2 (το 0 και το 1).
+        is_classification = len(np.unique(y_true)) <= 2 or y_true.dtype.kind in ['O', 'U', 'S', 'b']
+
+        if is_classification:
+            # Αν το PyTorch έβγαλε πιθανότητες (floats), τις κάνουμε στρογγυλοποίηση στο 0 ή 1
+            if y_pred.dtype.kind == 'f':
+                y_pred = (y_pred >= 0.5).astype(int)
+            
+            # Εξασφαλίζουμε ότι και το target είναι ακέραιος
+            if y_true.dtype.kind == 'f':
+                y_true = y_true.astype(int)
+                
             return float(accuracy_score(y_true, y_pred))
+        else:
+            # Είναι Regression (όπως θα είναι στο California Housing)
+            score = r2_score(y_true, y_pred)
+            return max(0.0, float(score))
