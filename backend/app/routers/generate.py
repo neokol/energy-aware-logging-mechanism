@@ -188,7 +188,7 @@ async def generate_california_artifacts():
         logger.info("Converting to ONNX (FP32)...")
         initial_types = [(name, FloatTensorType([None, 1])) for name in X_train.columns]
 
-        # No hacks needed here. MLP naturally creates ai.onnx domain nodes.
+        # MLP naturally creates ai.onnx domain nodes.
         onnx_model = convert_sklearn(model, initial_types=initial_types, target_opset=12)
         
         with open("california_fp32.onnx", "wb") as f:
@@ -212,7 +212,7 @@ async def generate_california_artifacts():
         raise HTTPException(status_code=500, detail=f"Artifact generation failed: {str(e)}")
     
 @router.post("/generate_adult_deep_learning_artifacts")
-async def generate_adult_deep_learning_artifacts():
+async def generate_adult_deep_learning_artifacts(epochs: int = 5):
     try:
         logger.info("🎬 Starting Adult Deep Learning Artifact Generation (PyTorch -> ONNX)...")
         
@@ -289,7 +289,7 @@ async def generate_adult_deep_learning_artifacts():
         # ======================================================================
         logger.info("🧠 Training Adult MLP (PyTorch)...")
         mlp_model = AdultMLP1(input_dim=num_features)
-        train_pytorch_model(mlp_model, train_loader, epochs=5) # 5 epochs is enough for functional artifacts
+        train_pytorch_model(mlp_model, train_loader, epochs=epochs) # 5 epochs is enough for functional artifacts
         mlp_model.eval()
 
         # Export MLP to ONNX FP32
@@ -331,7 +331,7 @@ async def generate_adult_deep_learning_artifacts():
         train_dataset_cnn = TensorDataset(X_train_cnn, y_train_tensor)
         train_loader_cnn = DataLoader(train_dataset_cnn, batch_size=64, shuffle=True)
         
-        train_pytorch_model(cnn_model, train_loader_cnn, epochs=5)
+        train_pytorch_model(cnn_model, train_loader_cnn, epochs=epochs)
         cnn_model.eval()
 
         # Export CNN to ONNX FP32
@@ -378,7 +378,7 @@ async def generate_adult_deep_learning_artifacts():
         raise HTTPException(status_code=500, detail=str(e))
     
 @router.post("/generate_california_housing_deep_learning_artifacts")
-async def generate_housing_deep_learning_artifacts():
+async def generate_housing_deep_learning_artifacts(epochs: int = 5):
     try:
         logger.info("🎬 Starting California Housing DL Artifact Generation...")
         
@@ -431,7 +431,7 @@ async def generate_housing_deep_learning_artifacts():
         mlp_model = HousingMLP(input_dim=num_features)
         
         # Notice we pass task="regression" here
-        train_pytorch_model(mlp_model, train_loader, epochs=5, task="regression") 
+        train_pytorch_model(mlp_model, train_loader, epochs=epochs, task="regression") 
         mlp_model.eval()
 
         # Export MLP
