@@ -9,7 +9,7 @@ import os
 
 from app.database.db import get_async_session
 from app.models.model import Model
-from app.models.enums import AlgorithmType
+from app.models.enums import AlgorithmType, ModelType, PrecisionType
 
 load_dotenv()
 
@@ -24,6 +24,8 @@ async def upload_model(
         file:UploadFile = File(...), 
         description: str= "", 
         algorithm: AlgorithmType = AlgorithmType,
+        model_type: ModelType = ModelType,
+        precision: PrecisionType = PrecisionType,
         session: AsyncSession = Depends(get_async_session)
     ):
     try:
@@ -43,7 +45,9 @@ async def upload_model(
             filename=file.filename,
             filepath=file_path,
             description=description,
-            algorithm=algorithm
+            algorithm=algorithm,
+            model_type=model_type,
+            precision=precision
         )
         session.add(new_model)
         await session.commit()

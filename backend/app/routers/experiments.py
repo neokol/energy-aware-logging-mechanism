@@ -270,3 +270,54 @@ async def run_batch(
         import traceback
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
+    
+@router.post("/run-batch-n-runs")
+async def run_batch_n_run(
+    req: BatchExperimentRequest,
+    n_runs: int = 1,
+    db: AsyncSession = Depends(get_async_session)
+):
+    try:
+        n_runs = max(1, min(n_runs, 10))
+        logger.info(f"Starting batch run for model_id: {req.model_id}, n_runs={n_runs}")
+
+        all_runs = []
+        dataset, df, model_service = await _get_dataset_and_model(db, req.dataset_id, req.model_id)
+        
+        batch_id = str(uuid.uuid4())
+
+        for i in range(n_runs):
+            logger.info(f"Executing run {i + 1}/{n_runs} ...")
+            run_result = await execute_experiment(
+                session=db, 
+                dataset=dataset, 
+                df=df, 
+                model_service=model_service, 
+                batch_id=batch_id
+            )
+            all_runs.append(run_result)
+
+        # 4. Calculate averages
+        avg_energy = _avg(all_runs, "energy_consumed_kwh")
+        avg_carbon = _avg(all_runs, "carbon_emissions_gco2eq")
+        avg_latency = _avg(all_runs, "latency_seconds") # or latency_ms
+        avg_accuracy = _avg(all_runs, "accuracy")
+
+        # 5. Return the aggregated payload
+        return {
+            "batch_id": batch_id,
+            "dataset_id": req.dataset_id,
+            "model_id": req.model_id,
+            "n_runs": n_runs,
+            "averaged_metrics": {
+                "energy_consumed_kwh": avg_energy,
+                "carbon_emissions_gco2eq": avg_carbon,
+                "latency_seconds": avg_latency,
+                "accuracy": avg_accuracy
+            },
+            "last_run_details": all_runs[-1] # Optional: return the final run for reference
+        }
+
+    except Exception as e:
+        logger.error(f"Error during batch execution: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
