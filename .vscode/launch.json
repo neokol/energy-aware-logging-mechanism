@@ -6,7 +6,7 @@
             "type": "debugpy",
             "request": "launch",
             "module": "uvicorn",
-            "python": "${workspaceFolder}/.venv/bin/python",
+            "python": "${workspaceFolder}/.venv/Scripts/python",
             "args": [
                 "backend.app.app:app",   
                 "--host", "0.0.0.0",
@@ -24,6 +24,7 @@
             "type": "debugpy",
             "request": "launch",
             "module": "streamlit",
+            "python": "${workspaceFolder}/.venv/Scripts/python",
             "args": [
                 "run",
                 "frontend/Home.py",

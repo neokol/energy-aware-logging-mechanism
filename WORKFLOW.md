@@ -6,15 +6,20 @@ Before running the server, generate the trained model files once:
 
 ```bash
 cd backend
-uv run python setup_models.py   # MLP — instant
-uv run python setup_cnn.py      # CNN — downloads MNIST, trains 1 epoch (~2 min)
+uv run python generate_mlp_data.py   # AI4I 2020 -> maintenance_train.csv + maintenance_test.csv
+uv run python setup_models.py        # trains the MLP (~10s)
+uv run python generate_cnn_data.py   # MNIST test split -> mnist_test.csv (labelled)
+uv run python setup_cnn.py           # trains the CNN, 5 epochs (~3-5 min)
 ```
 
 To generate the MLP-compatible dataset:
 
 ```bash
-uv run python generate_mlp_data.py   # produces maintenance_data.csv (512 features)
+uv run python generate_mlp_data.py   # downloads AI4I 2020, writes maintenance_train.csv + maintenance_test.csv
+uv run python setup_models.py        # trains the MLP on maintenance_train.csv, reports accuracy/F1
 ```
+
+Upload `maintenance_test.csv` through the UI (model type: MLP) to run Scenario A.
 
 Start the backend from the `backend/` directory:
 
@@ -39,8 +44,8 @@ uv run uvicorn app.app:app --reload
 
 | Model | File | Columns |
 |-------|------|---------|
-| MLP | `maintenance_data.csv` | 512 numeric features |
-| CNN | `mnist_test.csv` | 784 pixels or 785 (label + pixels) |
+| MLP | `maintenance_test.csv` | `label` + 10 features (AI4I 2020, pre-scaled) |
+| CNN | `mnist_test.csv` | 785: `label` + pixel0..pixel783 (raw 0-255) |
 
 ### Steps
 1. Save CSV file to disk at `UPLOAD_DIR` (configured in `.env`)
@@ -69,7 +74,7 @@ uv run uvicorn app.app:app --reload
 1. **Fetch dataset** from DB → load CSV into a Pandas DataFrame
 
 2. **Select model service** via `ModelFactory` based on `dataset.ai_model`:
-   - `MLP` → `mlp_service.py` — loads `trained_models/mlp_maintenance_v1.pth`
+   - `MLP` → `mlp_service.py` — loads `trained_models/mlp_maintenance_v1.pth` (trained on AI4I 2020)
    - `CNN` → `cnn_service.py` — loads `trained_models/cnn_mnist_v1.pth`
 
 3. **Platform detection** via `app/core/platform_config.py`:
@@ -82,8 +87,8 @@ uv run uvicorn app.app:app --reload
 
    b. **Run inference**:
       - If `INT8`: apply `torch.quantization.quantize_dynamic`
-      - MLP: 10 inference loops → returns `(latency, accuracy, throughput)`
-      - CNN: 5 inference loops, input reshaped to `(N, 1, 28, 28)` and normalized
+      - MLP: `MLP_INFERENCE_LOOPS` loops (default 10000) → returns `(latency, accuracy, throughput)`
+      - CNN: `CNN_INFERENCE_LOOPS` loops (default 10), input reshaped to `(N, 1, 28, 28)` and normalized (mean 0.1307 / std 0.3081)
 
    c. **Stop tracker** → collect:
       - `energy_consumed_kwh` (falls back to cpu + ram + gpu sum if NaN)
@@ -111,7 +116,7 @@ uv run uvicorn app.app:app --reload
 | `emissions_kg` | CO2 equivalent |
 | `cpu_energy_kwh` | CPU component energy |
 | `ram_energy_kwh` | RAM component energy |
-| `accuracy` | Hardcoded per model (FP32: 0.95/0.98, INT8: 0.92/0.96) |
+| `accuracy` | Real — argmax predictions vs `label` column (MLP ~0.97 on AI4I, CNN ~0.98 on MNIST) |
 | `duration` | codecarbon tracking duration |
 
 ---
@@ -148,6 +153,11 @@ uv run uvicorn app.app:app --reload
 | `DELETE /experiments` | Delete all experiments |
 | `POST /run-inference` | Run inference with uploaded ONNX or PKL model |
 | `POST /run-batch` | Batch inference across multiple models |
+| `POST /generate_adult_deep_learning_artifacts` | Scenario B: trains Adult MLP+CNN (PyTorch), exports FP32/INT8 ONNX, returns held-out accuracy / balanced accuracy / F1 |
+| `POST /generate_california_housing_deep_learning_artifacts` | Scenario C: trains Housing MLP+CNN regressors, exports FP32/INT8 ONNX, returns held-out R² / MAE / RMSE |
+
+Scenario B/C ONNX runs loop each inference until `ONNX_MIN_MEASURE_SECONDS` (default 5) elapse,
+so latency is fixed and the comparison is read from **throughput** and energy-per-sample.
 
 ---
 

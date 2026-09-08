@@ -29,10 +29,11 @@ def get_quantization_engine(detected: str = None) -> str:
     p = detected or detect_platform()
     if p == PLATFORM_MACOS_ARM:
         return "qnnpack"
-    elif p in (PLATFORM_LINUX_X86, PLATFORM_WINDOWS_X86):
+    elif p == PLATFORM_LINUX_X86:
         return "fbgemm"
+    elif p == PLATFORM_WINDOWS_X86:
+        return "qnnpack"
     else:
-        # Safe fallback — qnnpack works on more platforms than fbgemm
         logger.warning("Unknown platform, defaulting quantization engine to qnnpack")
         return "qnnpack"
 

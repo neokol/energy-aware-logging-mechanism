@@ -32,6 +32,7 @@ async def run_experiment_logic(session: AsyncSession , model_id: str, dataset_id
             dataset_id=dataset_id,
             precision=res["precision"],
             latency_seconds=res["latency"],
+            throughput_samples_per_sec=res.get("throughput"),
             emissions_kg=res["emissions"],
             energy_consumed_kwh=res["energy"],
             cpu_energy_kwh=res["cpu_energy"],
@@ -85,11 +86,12 @@ async def run_batch_experiment(session: AsyncSession, dataset_id: str, model_ids
         # 4. Save Results with the shared batch_id
         for res in results:
             exp = Experiment(
-                batch_id=batch_id,           
+                batch_id=batch_id,
                 dataset_id=dataset_id,
-                model_id=m_id,               
+                model_id=m_id,
                 precision=res["precision"],
                 latency_seconds=res["latency"],
+                throughput_samples_per_sec=res.get("throughput"),
                 emissions_kg=res["emissions"],
                 energy_consumed_kwh=res["energy"],
                 cpu_energy_kwh=res["cpu_energy"],

@@ -33,6 +33,12 @@ try:
 except Exception:
     datasets = []
 
+try:
+    m_resp = requests.get(f"{API_URL}/models")
+    models = m_resp.json() if m_resp.status_code == 200 else []
+except Exception:
+    models = []
+
 if not experiments:
     st.warning("No experiments found. Run some experiments first.")
     st.stop()
@@ -49,6 +55,17 @@ else:
     df["ai_model"] = "Unknown"
     df["filename"] = ""
 
+# Per-experiment architecture: prefer the uploaded model's type (a batch mixes
+# architectures under one dataset), fall back to the dataset's ai_model.
+if models and "model_id" in df.columns:
+    m_df = pd.DataFrame(models)[["id", "model_type"]].rename(
+        columns={"id": "model_id", "model_type": "arch"}
+    )
+    df = df.merge(m_df, on="model_id", how="left")
+    df["arch"] = df["arch"].fillna(df["ai_model"])
+else:
+    df["arch"] = df["ai_model"]
+
 # Normalize column types
 for col in ["energy_consumed_kwh", "emissions_kg", "latency_seconds", "accuracy", "cpu_energy_kwh", "ram_energy_kwh", "throughput_samples_per_sec"]:
     if col in df.columns:
@@ -63,8 +80,8 @@ col1, col2, col3, col4, col5 = st.columns(5)
 col1.metric("Total Experiments", len(df))
 col2.metric("FP32 Runs", int((df["precision"] == "FP32").sum()))
 col3.metric("INT8 Runs", int((df["precision"] == "INT8").sum()))
-col4.metric("MLP Runs", int((df.get("ai_model", pd.Series()) == "MLP").sum()))
-col5.metric("CNN Runs", int((df.get("ai_model", pd.Series()) == "CNN").sum()))
+col4.metric("MLP Runs", int((df["arch"] == "MLP").sum()))
+col5.metric("CNN Runs", int((df["arch"] == "CNN").sum()))
 
 st.divider()
 
@@ -72,19 +89,19 @@ st.divider()
 st.subheader("Filter & Explore")
 fcol1, fcol2, fcol3 = st.columns(3)
 precision_filter = fcol1.multiselect("Precision", options=["FP32", "INT8"], default=["FP32", "INT8"])
-model_filter = fcol2.multiselect("Model Type", options=df["ai_model"].dropna().unique().tolist(), default=df["ai_model"].dropna().unique().tolist())
+model_filter = fcol2.multiselect("Architecture", options=df["arch"].dropna().unique().tolist(), default=df["arch"].dropna().unique().tolist())
 dataset_filter = fcol3.multiselect("Dataset", options=df["filename"].dropna().unique().tolist(), default=df["filename"].dropna().unique().tolist())
 
 filtered = df[
     df["precision"].isin(precision_filter) &
-    df["ai_model"].isin(model_filter) &
+    df["arch"].isin(model_filter) &
     df["filename"].isin(dataset_filter)
 ]
 
 # --- TABLE ---
-display_cols = ["filename", "ai_model", "precision", "energy_consumed_kwh", "emissions_kg", "latency_seconds", "throughput_samples_per_sec", "accuracy", "created_at_str"]
+display_cols = ["filename", "arch", "precision", "energy_consumed_kwh", "emissions_kg", "latency_seconds", "throughput_samples_per_sec", "accuracy", "created_at_str"]
 display_cols = [c for c in display_cols if c in filtered.columns]
-export_df = filtered[display_cols].rename(columns={"created_at_str": "created_at", "filename": "dataset", "ai_model": "model"}).reset_index(drop=True)
+export_df = filtered[display_cols].rename(columns={"created_at_str": "created_at", "filename": "dataset", "arch": "model"}).reset_index(drop=True)
 st.dataframe(export_df, use_container_width=True)
 
 st.download_button(
@@ -102,82 +119,49 @@ if filtered.empty:
     st.stop()
 
 st.subheader("Visual Comparison")
+st.caption("Bars are grouped by architecture; a batch that mixes MLP and CNN keeps them separate.")
+
+_PREC_SCALE = alt.Scale(domain=["FP32", "INT8"], range=["#FF4B4B", "#00CC96"])
+
+
+def _grouped_bar(col: str, y_title: str, zero_one: bool = False):
+    d = filtered[["precision", "arch", col]].dropna()
+    if d.empty:
+        return
+    y = alt.Y(f"mean({col}):Q", title=y_title,
+             scale=alt.Scale(domain=[0, 1]) if zero_one else alt.Undefined)
+    st.altair_chart(
+        alt.Chart(d).mark_bar().encode(
+            x=alt.X("arch:N", title=None),
+            xOffset="precision:N",
+            y=y,
+            color=alt.Color("precision:N", scale=_PREC_SCALE),
+            tooltip=["arch", "precision", alt.Tooltip(f"mean({col}):Q", format=".6g")],
+        ).properties(height=300),
+        use_container_width=True,
+    )
+
 
 chart_col1, chart_col2 = st.columns(2)
-
 with chart_col1:
     st.markdown("#### ⚡ Energy Consumed (kWh)")
-    energy_df = filtered[["precision", "energy_consumed_kwh"]].dropna()
-    if not energy_df.empty:
-        st.altair_chart(
-            alt.Chart(energy_df).mark_bar().encode(
-                x=alt.X("precision:N", title=None),
-                y=alt.Y("mean(energy_consumed_kwh):Q", title="Avg kWh"),
-                color=alt.Color("precision:N", scale=alt.Scale(domain=["FP32", "INT8"], range=["#FF4B4B", "#00CC96"])),
-                tooltip=["precision", "mean(energy_consumed_kwh):Q"]
-            ).properties(height=300),
-            use_container_width=True
-        )
-
+    _grouped_bar("energy_consumed_kwh", "Avg kWh")
 with chart_col2:
     st.markdown("#### ⏱ Latency (seconds)")
-    latency_df = filtered[["precision", "latency_seconds"]].dropna()
-    if not latency_df.empty:
-        st.altair_chart(
-            alt.Chart(latency_df).mark_bar().encode(
-                x=alt.X("precision:N", title=None),
-                y=alt.Y("mean(latency_seconds):Q", title="Avg seconds"),
-                color=alt.Color("precision:N", scale=alt.Scale(domain=["FP32", "INT8"], range=["#FF4B4B", "#00CC96"])),
-                tooltip=["precision", "mean(latency_seconds):Q"]
-            ).properties(height=300),
-            use_container_width=True
-        )
+    _grouped_bar("latency_seconds", "Avg seconds")
 
 chart_col2b, _ = st.columns(2)
-
 with chart_col2b:
     st.markdown("#### 🚀 Throughput (samples/sec)")
-    tput_df = filtered[["precision", "throughput_samples_per_sec"]].dropna()
-    if not tput_df.empty:
-        st.altair_chart(
-            alt.Chart(tput_df).mark_bar().encode(
-                x=alt.X("precision:N", title=None),
-                y=alt.Y("mean(throughput_samples_per_sec):Q", title="Avg samples/sec"),
-                color=alt.Color("precision:N", scale=alt.Scale(domain=["FP32", "INT8"], range=["#FF4B4B", "#00CC96"]), legend=None),
-                tooltip=["precision", "mean(throughput_samples_per_sec):Q"]
-            ).properties(height=300),
-            use_container_width=True
-        )
+    _grouped_bar("throughput_samples_per_sec", "Avg samples/sec")
 
 chart_col3, chart_col4 = st.columns(2)
-
 with chart_col3:
     st.markdown("#### 🌍 Carbon Emissions (kg CO2)")
-    emissions_df = filtered[["precision", "emissions_kg"]].dropna()
-    if not emissions_df.empty:
-        st.altair_chart(
-            alt.Chart(emissions_df).mark_bar().encode(
-                x=alt.X("precision:N", title=None),
-                y=alt.Y("mean(emissions_kg):Q", title="Avg kg CO2"),
-                color=alt.Color("precision:N", scale=alt.Scale(domain=["FP32", "INT8"], range=["#FF4B4B", "#00CC96"])),
-                tooltip=["precision", "mean(emissions_kg):Q"]
-            ).properties(height=300),
-            use_container_width=True
-        )
-
+    _grouped_bar("emissions_kg", "Avg kg CO2")
 with chart_col4:
-    st.markdown("#### 🎯 Accuracy")
-    acc_df = filtered[["precision", "accuracy"]].dropna()
-    if not acc_df.empty:
-        st.altair_chart(
-            alt.Chart(acc_df).mark_bar().encode(
-                x=alt.X("precision:N", title=None),
-                y=alt.Y("mean(accuracy):Q", title="Avg Accuracy", scale=alt.Scale(domain=[0, 1])),
-                color=alt.Color("precision:N", scale=alt.Scale(domain=["FP32", "INT8"], range=["#FF4B4B", "#00CC96"])),
-                tooltip=["precision", "mean(accuracy):Q"]
-            ).properties(height=300),
-            use_container_width=True
-        )
+    st.markdown("#### 🎯 Accuracy / R²")
+    _grouped_bar("accuracy", "Avg accuracy or R²", zero_one=True)
 
 st.divider()
 

@@ -1,6 +1,6 @@
 import ssl
-from backend.app.pytorch_models.helpers import train_pytorch_model
-from backend.app.pytorch_models.models import AdultCNN1D, AdultMLP1, HousingCNN1D, HousingMLP
+from app.pytorch_models.helpers import train_pytorch_model
+from app.pytorch_models.models import AdultCNN1D, AdultMLP1, HousingCNN1D, HousingMLP
 import joblib
 import torch
 import torch.nn as nn
@@ -25,6 +25,7 @@ from sklearn.compose import ColumnTransformer
 from sklearn.impute import SimpleImputer
 from sklearn.preprocessing import StandardScaler, OneHotEncoder
 from sklearn.datasets import fetch_openml
+from sklearn.metrics import accuracy_score, balanced_accuracy_score, f1_score, confusion_matrix, r2_score
 import joblib
 import pickle
 
@@ -32,6 +33,7 @@ import pickle
 from skl2onnx import convert_sklearn
 from skl2onnx.common.data_types import FloatTensorType, StringTensorType
 import onnx
+import onnxruntime as ort
 from onnxruntime.quantization import quantize_dynamic, QuantType
 
 
@@ -53,6 +55,33 @@ os.makedirs(ARTIFACTS_DIR, exist_ok=True)
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+
+def _eval_onnx_classifier(model_path: str, X: np.ndarray, y_true: np.ndarray) -> dict:
+    """Run an ONNX binary classifier and return accuracy / balanced accuracy / F1."""
+    sess = ort.InferenceSession(model_path)
+    out_name = sess.get_outputs()[0].name
+    preds = sess.run([out_name], {sess.get_inputs()[0].name: X})[0].reshape(-1)
+    y_pred = (preds >= 0.5).astype(int)
+    return {
+        "accuracy": round(float(accuracy_score(y_true, y_pred)), 4),
+        "balanced_accuracy": round(float(balanced_accuracy_score(y_true, y_pred)), 4),
+        "f1": round(float(f1_score(y_true, y_pred, zero_division=0)), 4),
+        "confusion_matrix": confusion_matrix(y_true, y_pred).tolist(),
+    }
+
+
+def _eval_onnx_regressor(model_path: str, X: np.ndarray, y_true: np.ndarray) -> dict:
+    """Run an ONNX regressor and return R^2 / MAE / RMSE."""
+    sess = ort.InferenceSession(model_path)
+    out_name = sess.get_outputs()[0].name
+    preds = sess.run([out_name], {sess.get_inputs()[0].name: X})[0].reshape(-1)
+    err = preds - y_true
+    return {
+        "r2": round(float(r2_score(y_true, preds)), 4),
+        "mae": round(float(np.abs(err).mean()), 4),
+        "rmse": round(float(np.sqrt((err ** 2).mean())), 4),
+    }
 
 @router.post("/generate_adult_artifacts")
 async def create_adult_artifacts():
@@ -216,31 +245,45 @@ async def generate_adult_deep_learning_artifacts(epochs: int = 5):
     try:
         logger.info("🎬 Starting Adult Deep Learning Artifact Generation (PyTorch -> ONNX)...")
         
+        torch.manual_seed(42)
+        np.random.seed(42)
+
         # 1. Load Data
         logger.info("⏳ Fetching Adult dataset from OpenML...")
         data = fetch_openml(name='adult', version=2, as_frame=True, parser='auto')
         X = data.data
         # Μετατροπή target σε binary (0 ή 1)
         y = (data.target.astype(str).str.strip() == '>50K').astype(int).values
-        
-        numeric_features = ['age', 'capital-gain', 'capital-loss', 'hours-per-week']
+
+        numeric_features = ['age', 'education-num', 'capital-gain', 'capital-loss', 'hours-per-week']
         categorical_features = ['workclass', 'education', 'marital-status', 'occupation', 'relationship', 'race', 'sex', 'native-country']
 
         # Ensure correct column ordering before preprocessing
         X = X[numeric_features + categorical_features].copy()
-        
+
         # Μετατροπή κατηγορικών σε string για συμβατότητα
         for col in categorical_features:
             X[col] = X[col].astype(str)
 
-        # Split Data
-        X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+        # Split Data (stratified: the target is imbalanced ~24% positives)
+        X_trainval, X_test, y_trainval, y_test = train_test_split(
+            X, y, test_size=0.2, random_state=42, stratify=y
+        )
+        X_train, X_val, y_train, y_val = train_test_split(
+            X_trainval, y_trainval, test_size=0.15, random_state=42, stratify=y_trainval
+        )
+
+        pos_rate = y_train.mean()
+        # sqrt of the inverse-frequency weight: corrects the imbalance without
+        # collapsing raw accuracy (same trick as the AI4I / Scenario A model)
+        pos_weight = float(((1 - pos_rate) / pos_rate) ** 0.5)
+        logger.info(f"Positive rate {pos_rate:.3f} -> pos_weight {pos_weight:.2f}")
 
         # Σώζουμε το raw Test Data σε CSV για το upload του Dataset
         test_csv_path = os.path.join(ARTIFACTS_DIR, "adult_dl_test.csv")
         logger.info(f"💾 Saving raw test data to {test_csv_path}...")
         test_df = X_test.copy()
-        test_df['target'] = y_test 
+        test_df['target'] = y_test
         test_df.to_csv(test_csv_path, index=False)
 
         # 2. Define Preprocessing (Crucial for Tabular data even with PyTorch)
@@ -264,7 +307,9 @@ async def generate_adult_deep_learning_artifacts(epochs: int = 5):
         # Fit on training data
         preprocessor.fit(X_train)
         X_train_processed = preprocessor.transform(X_train).astype(np.float32)
-        
+        X_val_processed = preprocessor.transform(X_val).astype(np.float32)
+        X_test_processed = preprocessor.transform(X_test).astype(np.float32)
+
         num_features = X_train_processed.shape[1]
         logger.info(f"✅ Preprocessing complete. Feature dimension after One-Hot: {num_features}")
 
@@ -276,9 +321,14 @@ async def generate_adult_deep_learning_artifacts(epochs: int = 5):
         # 3. Prepare PyTorch Tensors & DataLoaders
         X_train_tensor = torch.from_numpy(X_train_processed)
         y_train_tensor = torch.from_numpy(y_train).float()
-        
+        X_val_tensor = torch.from_numpy(X_val_processed)
+        y_val_tensor = torch.from_numpy(y_val).float()
+
         train_dataset = TensorDataset(X_train_tensor, y_train_tensor)
         train_loader = DataLoader(train_dataset, batch_size=64, shuffle=True)
+        val_loader = DataLoader(
+            TensorDataset(X_val_tensor, y_val_tensor), batch_size=256, shuffle=False
+        )
 
         # Dummies for ONNX export
         dummy_input_mlp = torch.randn(1, num_features)
@@ -289,22 +339,26 @@ async def generate_adult_deep_learning_artifacts(epochs: int = 5):
         # ======================================================================
         logger.info("🧠 Training Adult MLP (PyTorch)...")
         mlp_model = AdultMLP1(input_dim=num_features)
-        train_pytorch_model(mlp_model, train_loader, epochs=epochs) # 5 epochs is enough for functional artifacts
+        train_pytorch_model(
+            mlp_model, train_loader, epochs=max(epochs, 40),
+            val_loader=val_loader, pos_weight=pos_weight, patience=8,
+        )
         mlp_model.eval()
 
         # Export MLP to ONNX FP32
         mlp_fp32_path = os.path.join(ARTIFACTS_DIR, "adult_mlp_fp32.onnx")
         logger.info(f"🔄 Exporting MLP to ONNX (FP32): {mlp_fp32_path}")
         torch.onnx.export(
-            mlp_model, 
-            dummy_input_mlp, 
+            mlp_model,
+            dummy_input_mlp,
             mlp_fp32_path,
             export_params=True,
             opset_version=12,
             do_constant_folding=True,
             input_names=['input'],
             output_names=['output'],
-            dynamic_axes={'input': {0: 'batch_size'}, 'output': {0: 'batch_size'}}
+            dynamic_axes={'input': {0: 'batch_size'}, 'output': {0: 'batch_size'}},
+            dynamo=False,
         )
 
         # temp_model = onnx.load(mlp_fp32_path)
@@ -325,27 +379,34 @@ async def generate_adult_deep_learning_artifacts(epochs: int = 5):
         # ======================================================================
         logger.info("📡 Training Adult 1D CNN (PyTorch)...")
         cnn_model = AdultCNN1D(input_dim=num_features)
-        
+
         # Prepare data for CNN training (requires reshape to include channel dim)
         X_train_cnn = X_train_tensor.unsqueeze(1) # (Batch, Features) -> (Batch, 1, Features)
         train_dataset_cnn = TensorDataset(X_train_cnn, y_train_tensor)
         train_loader_cnn = DataLoader(train_dataset_cnn, batch_size=64, shuffle=True)
-        
-        train_pytorch_model(cnn_model, train_loader_cnn, epochs=epochs)
+        val_loader_cnn = DataLoader(
+            TensorDataset(X_val_tensor.unsqueeze(1), y_val_tensor), batch_size=256, shuffle=False
+        )
+
+        train_pytorch_model(
+            cnn_model, train_loader_cnn, epochs=max(epochs, 40),
+            val_loader=val_loader_cnn, pos_weight=pos_weight, patience=8,
+        )
         cnn_model.eval()
 
         # Export CNN to ONNX FP32
         cnn_fp32_path = os.path.join(ARTIFACTS_DIR, "adult_cnn_fp32.onnx")
         logger.info(f"🔄 Exporting CNN to ONNX (FP32): {cnn_fp32_path}")
         torch.onnx.export(
-            cnn_model, 
-            dummy_input_cnn, 
+            cnn_model,
+            dummy_input_cnn,
             cnn_fp32_path,
             export_params=True,
             opset_version=12,
             input_names=['input'],
             output_names=['output'],
-            dynamic_axes={'input': {0: 'batch_size'}, 'output': {0: 'batch_size'}}
+            dynamic_axes={'input': {0: 'batch_size'}, 'output': {0: 'batch_size'}},
+            dynamo=False,
         )
 
         m = onnx.load(cnn_fp32_path)
@@ -358,11 +419,27 @@ async def generate_adult_deep_learning_artifacts(epochs: int = 5):
         # Quantize CNN to INT8
         cnn_int8_path = os.path.join(ARTIFACTS_DIR, "adult_cnn_int8.onnx")
         logger.info(f"⚡ Quantizing CNN to INT8: {cnn_int8_path}")
-        quantize_dynamic(cnn_fp32_path, cnn_int8_path, weight_type=QuantType.QUInt8)
+        quantize_dynamic(cnn_fp32_path, cnn_int8_path, weight_type=QuantType.QUInt8, extra_options={'EnableSubgraph': True})
+
+        # ======================================================================
+        # Held-out test evaluation (FP32 vs INT8, both architectures)
+        # ======================================================================
+        X_test_cnn = X_test_processed.reshape(X_test_processed.shape[0], 1, num_features)
+        metrics = {
+            "mlp_fp32": _eval_onnx_classifier(mlp_fp32_path, X_test_processed, y_test),
+            "mlp_int8": _eval_onnx_classifier(mlp_int8_path, X_test_processed, y_test),
+            "cnn_fp32": _eval_onnx_classifier(cnn_fp32_path, X_test_cnn, y_test),
+            "cnn_int8": _eval_onnx_classifier(cnn_int8_path, X_test_cnn, y_test),
+        }
+        majority_baseline = round(float(max(y_test.mean(), 1 - y_test.mean())), 4)
+        logger.info(f"📊 Held-out test metrics (majority baseline {majority_baseline}): {metrics}")
 
         logger.info("✅ SUCCESS! Adult Deep Learning artifacts created in 'artifacts_deep_learning/'")
         return {
             "message": "Adult Deep Learning artifacts generated successfully",
+            "test_samples": int(len(y_test)),
+            "majority_baseline": majority_baseline,
+            "metrics": metrics,
             "files": [
                 test_csv_path,
                 preprocessor_path,
@@ -382,19 +459,23 @@ async def generate_housing_deep_learning_artifacts(epochs: int = 5):
     try:
         logger.info("🎬 Starting California Housing DL Artifact Generation...")
         
+        torch.manual_seed(42)
+        np.random.seed(42)
+
         # 1. Load Data
         logger.info("⏳ Fetching California Housing dataset...")
         data = fetch_california_housing(as_frame=True)
         X = data.data
-        y = data.target.values # Continuous targets for regression
-        
+        y = data.target.values.astype(np.float32)  # continuous targets (median house value, $100k)
+
         # Split Data
-        X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+        X_trainval, X_test, y_trainval, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+        X_train, X_val, y_train, y_val = train_test_split(X_trainval, y_trainval, test_size=0.15, random_state=42)
 
         # Save raw Test Data
         test_csv_path = os.path.join(ARTIFACTS_DIR, "housing_dl_test.csv")
         test_df = X_test.copy()
-        test_df['target'] = y_test 
+        test_df['target'] = y_test
         test_df.to_csv(test_csv_path, index=False)
 
         # 2. Preprocessing (Only numerical features, so much simpler!)
@@ -404,10 +485,11 @@ async def generate_housing_deep_learning_artifacts(epochs: int = 5):
             ('scaler', StandardScaler())
         ])
 
-        # Fit and Transform
         preprocessor.fit(X_train)
         X_train_processed = preprocessor.transform(X_train).astype(np.float32)
-        num_features = X_train_processed.shape[1] # Will be exactly 8
+        X_val_processed = preprocessor.transform(X_val).astype(np.float32)
+        X_test_processed = preprocessor.transform(X_test).astype(np.float32)
+        num_features = X_train_processed.shape[1]  # exactly 8
 
         # Save preprocessor
         preprocessor_path = os.path.join(ARTIFACTS_DIR, "housing_preprocessor.joblib")
@@ -416,9 +498,12 @@ async def generate_housing_deep_learning_artifacts(epochs: int = 5):
         # 3. Prepare PyTorch Tensors & DataLoaders
         X_train_tensor = torch.from_numpy(X_train_processed)
         y_train_tensor = torch.from_numpy(y_train).float()
-        
+        X_val_tensor = torch.from_numpy(X_val_processed)
+        y_val_tensor = torch.from_numpy(y_val).float()
+
         train_dataset = TensorDataset(X_train_tensor, y_train_tensor)
         train_loader = DataLoader(train_dataset, batch_size=64, shuffle=True)
+        val_loader = DataLoader(TensorDataset(X_val_tensor, y_val_tensor), batch_size=256, shuffle=False)
 
         # Dummies for ONNX export
         dummy_input_mlp = torch.randn(1, num_features)
@@ -429,9 +514,10 @@ async def generate_housing_deep_learning_artifacts(epochs: int = 5):
         # ======================================================================
         logger.info("🧠 Training Housing MLP...")
         mlp_model = HousingMLP(input_dim=num_features)
-        
-        # Notice we pass task="regression" here
-        train_pytorch_model(mlp_model, train_loader, epochs=epochs, task="regression") 
+        train_pytorch_model(
+            mlp_model, train_loader, epochs=max(epochs, 80), task="regression",
+            val_loader=val_loader, patience=12,
+        )
         mlp_model.eval()
 
         # Export MLP
@@ -440,7 +526,8 @@ async def generate_housing_deep_learning_artifacts(epochs: int = 5):
             mlp_model, dummy_input_mlp, mlp_fp32_path,
             export_params=True, opset_version=12,
             input_names=['input'], output_names=['output'],
-            dynamic_axes={'input': {0: 'batch_size'}, 'output': {0: 'batch_size'}}
+            dynamic_axes={'input': {0: 'batch_size'}, 'output': {0: 'batch_size'}},
+            dynamo=False,
         )
 
         # Clean shape info for quantization
@@ -457,13 +544,18 @@ async def generate_housing_deep_learning_artifacts(epochs: int = 5):
         # ======================================================================
         logger.info("📡 Training Housing 1D CNN...")
         cnn_model = HousingCNN1D(input_dim=num_features)
-        
-        X_train_cnn = X_train_tensor.unsqueeze(1) 
+
+        X_train_cnn = X_train_tensor.unsqueeze(1)
         train_dataset_cnn = TensorDataset(X_train_cnn, y_train_tensor)
         train_loader_cnn = DataLoader(train_dataset_cnn, batch_size=64, shuffle=True)
-        
-        # Notice we pass task="regression" here too
-        train_pytorch_model(cnn_model, train_loader_cnn, epochs=5, task="regression")
+        val_loader_cnn = DataLoader(
+            TensorDataset(X_val_tensor.unsqueeze(1), y_val_tensor), batch_size=256, shuffle=False
+        )
+
+        train_pytorch_model(
+            cnn_model, train_loader_cnn, epochs=max(epochs, 80), task="regression",
+            val_loader=val_loader_cnn, patience=12,
+        )
         cnn_model.eval()
 
         # Export CNN
@@ -472,7 +564,8 @@ async def generate_housing_deep_learning_artifacts(epochs: int = 5):
             cnn_model, dummy_input_cnn, cnn_fp32_path,
             export_params=True, opset_version=12,
             input_names=['input'], output_names=['output'],
-            dynamic_axes={'input': {0: 'batch_size'}, 'output': {0: 'batch_size'}}
+            dynamic_axes={'input': {0: 'batch_size'}, 'output': {0: 'batch_size'}},
+            dynamo=False,
         )
 
         # Clean shape info for quantization
@@ -484,9 +577,23 @@ async def generate_housing_deep_learning_artifacts(epochs: int = 5):
         cnn_int8_path = os.path.join(ARTIFACTS_DIR, "housing_cnn_int8.onnx")
         quantize_dynamic(cnn_fp32_path, cnn_int8_path, weight_type=QuantType.QUInt8, extra_options={'EnableSubgraph': True})
 
+        # Held-out test evaluation (R^2 / MAE / RMSE)
+        X_test_cnn = X_test_processed.reshape(X_test_processed.shape[0], 1, num_features)
+        mean_baseline_rmse = round(float(np.sqrt(((y_test - y_train.mean()) ** 2).mean())), 4)
+        metrics = {
+            "mlp_fp32": _eval_onnx_regressor(mlp_fp32_path, X_test_processed, y_test),
+            "mlp_int8": _eval_onnx_regressor(mlp_int8_path, X_test_processed, y_test),
+            "cnn_fp32": _eval_onnx_regressor(cnn_fp32_path, X_test_cnn, y_test),
+            "cnn_int8": _eval_onnx_regressor(cnn_int8_path, X_test_cnn, y_test),
+        }
+        logger.info(f"📊 Held-out test metrics (mean-baseline RMSE {mean_baseline_rmse}): {metrics}")
+
         logger.info("✅ SUCCESS! Housing Deep Learning artifacts created.")
         return {
             "message": "Housing Deep Learning artifacts generated successfully",
+            "test_samples": int(len(y_test)),
+            "mean_baseline_rmse": mean_baseline_rmse,
+            "metrics": metrics,
             "files": [test_csv_path, preprocessor_path, mlp_fp32_path, mlp_int8_path, cnn_fp32_path, cnn_int8_path]
         }
 

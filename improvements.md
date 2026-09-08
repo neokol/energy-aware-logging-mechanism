@@ -49,5 +49,10 @@
 - WORKFLOW.md — fully updated with prerequisites, all endpoints, metrics table, frontend pages, platform support table, and key files
 ## What's Still Worth Doing
 
-- Real accuracy measurement — currently hardcoded (0.95/0.98 FP32, 0.92/0.96 INT8); real label comparison would make the thesis results meaningful
-- Upload the MLP dataset — maintenance_data.csv needs to be uploaded via the UI to run MLP experiments
+- Upload `maintenance_test.csv` via the UI (model type MLP) to run Scenario A
+- Scenario B/C (ONNX path): one strategy call per model, but each call now loops the
+  inference until `ONNX_MIN_MEASURE_SECONDS` (default 5s) elapse; still no batch-level n_runs
+- onnx_inference now auto-selects the matching saved preprocessor by column names
+  (was hard-coded to adult only -> housing inference used raw unscaled features -> R^2 ~ 0)
+- Regression accuracy is now the real R^2 (can be negative); generate endpoint reports R^2/MAE/RMSE
+- codecarbon resolution: even at 2000 loops the MLP runs only ~2–4 s; document this in the thesis limitations

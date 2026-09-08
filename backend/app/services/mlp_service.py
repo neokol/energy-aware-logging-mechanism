@@ -19,10 +19,15 @@ logger = logging.getLogger(__name__)
 
 MLP_MODEL_PATH = os.getenv("MLP_MODEL_PATH", "trained_models/mlp_maintenance_v1.pth")
 
+# Predictive-maintenance inference is a sub-millisecond workload on this model;
+# repeating it keeps the codecarbon measurement window long enough to be meaningful.
+# Override via MLP_INFERENCE_LOOPS in .env.
+INFERENCE_LOOPS = int(os.getenv("MLP_INFERENCE_LOOPS", "10000"))
+
 class MLPModelService(BaseAIModel):
     def __init__(self):
-        self.input_size = 512
-        self.hidden_size = 1024
+        self.input_size = 10
+        self.hidden_size = 128
         self.num_classes = 2
         
     def load_model(self):
@@ -50,8 +55,8 @@ class MLPModelService(BaseAIModel):
         model = self.load_model()
         
         if precision == PrecisionType.INT8.value:
-            from app.core.platform_config import get_quantization_engine
-            torch.backends.quantized.engine = get_quantization_engine()
+            # from app.core.platform_config import get_quantization_engine
+            # torch.backends.quantized.engine = get_quantization_engine()
             model = torch.quantization.quantize_dynamic(
                 model, {torch.nn.Linear}, dtype=torch.qint8
             )
@@ -64,13 +69,13 @@ class MLPModelService(BaseAIModel):
         start_time = time.time()
 
         with torch.no_grad():
-            for _ in range(10):
+            for _ in range(INFERENCE_LOOPS):
                 output = model(input_tensor)
 
         end_time = time.time()
         latency = end_time - start_time
 
-        n_loops = 10
+        n_loops = INFERENCE_LOOPS
         n_samples = len(df)
         throughput = (n_samples * n_loops) / latency if latency > 0 else 0.0
 

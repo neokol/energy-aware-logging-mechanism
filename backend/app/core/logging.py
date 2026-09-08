@@ -19,14 +19,20 @@ def setup_logging():
     """
     # Create a custom format
     log_format = "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
-    
+
+    # Log messages contain emoji; keep them from crashing a non-UTF-8 console (Windows cp1252)
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="backslashreplace")
+    except Exception:
+        pass
+
     # 1. Configure the Root Logger
     logging.basicConfig(
         level=LOG_LEVEL,
         format=log_format,
         handlers=[
             # Handler 1: Write to File (rotates if it gets huge, optional but good)
-            logging.FileHandler(LOG_FILE),
+            logging.FileHandler(LOG_FILE, encoding="utf-8"),
             # Handler 2: Write to Terminal (Standard Output)
             logging.StreamHandler(sys.stdout)
         ]

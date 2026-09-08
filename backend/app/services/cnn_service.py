@@ -1,6 +1,7 @@
 import torch
 import time
 import os
+import logging
 import pandas as pd
 import numpy as np
 from dotenv import load_dotenv
@@ -11,8 +12,17 @@ from app.models.enums import PrecisionType
 
 
 load_dotenv()
+logger = logging.getLogger(__name__)
 
 CNN_MODEL_PATH = os.getenv("CNN_MODEL_PATH", "trained_models/cnn_mnist_v1.pth")
+
+# Must match the normalisation used in setup_cnn.py
+MNIST_MEAN, MNIST_STD = 0.1307, 0.3081
+
+# CNN inference is far heavier per sample than the MLP: ~10 passes over the
+# 10k-image test set already gives a multi-second measurement window.
+# Override via CNN_INFERENCE_LOOPS.
+INFERENCE_LOOPS = int(os.getenv("CNN_INFERENCE_LOOPS", "10"))
 
 class CNNModelService(BaseAIModel):
     
@@ -54,8 +64,8 @@ class CNNModelService(BaseAIModel):
         except RuntimeError:
             raise ValueError(f"Shape mismatch! Expected 784 pixels per row, got {df_numeric.shape[1]}")
 
-        # Normalize (0-255 -> 0-1) roughly, or use standard normalization
-        input_tensor = input_tensor / 255.0
+        # Same pipeline as training: scale to [0, 1] then standardise
+        input_tensor = (input_tensor / 255.0 - MNIST_MEAN) / MNIST_STD
 
         # 2. LOAD MODEL
         model = self.load_model()
@@ -63,26 +73,25 @@ class CNNModelService(BaseAIModel):
         # 3. QUANTIZATION (The Thesis Experiment)
         if precision == PrecisionType.INT8.value:
             print("--- Applying INT8 Quantization (CNN) ---")
-            from app.core.platform_config import get_quantization_engine
-            torch.backends.quantized.engine = get_quantization_engine()
+            # Dynamic quantization only supports Linear/RNN layers; the Conv2d
+            # feature extractor stays in FP32 (partial quantization).
             model = torch.quantization.quantize_dynamic(
-                model, {torch.nn.Linear, torch.nn.Conv2d}, dtype=torch.qint8
+                model, {torch.nn.Linear}, dtype=torch.qint8
             )
         else:
             print("--- Running Standard FP32 (CNN) ---")
 
         # 4. RUN INFERENCE
         start_time = time.time()
-        
+
         with torch.no_grad():
-            # Loop for measurability (CNNs are heavy, so 5 loops is enough)
-            for _ in range(5):
+            for _ in range(INFERENCE_LOOPS):
                 _ = model(input_tensor)
 
         end_time = time.time()
         latency = end_time - start_time
 
-        n_loops = 5
+        n_loops = INFERENCE_LOOPS
         n_samples = len(df)
         throughput = (n_samples * n_loops) / latency if latency > 0 else 0.0
 
@@ -91,7 +100,9 @@ class CNNModelService(BaseAIModel):
                 final_output = model(input_tensor)
             predictions = final_output.argmax(dim=1)
             accuracy = float((predictions == labels).sum()) / len(labels)
+            logger.info(f"Real CNN accuracy ({precision}): {accuracy:.4f}")
         else:
             accuracy = 0.98 if precision == PrecisionType.FP32.value else 0.96
+            logger.warning("No label column found (expected 785 cols) — using dummy accuracy")
 
         return latency, accuracy, throughput
